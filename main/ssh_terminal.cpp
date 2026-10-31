@@ -2547,6 +2547,20 @@ static void output_badge_or_symbol(lv_obj_t* ta, const char* rep)
 {
     if (!ta || !rep || rep[0] == '\0') return;
 
+    int32_t cpos = lv_textarea_get_cursor_pos(ta);
+    const char* cur_t = lv_textarea_get_text(ta);
+    size_t cur_len = cur_t ? strlen(cur_t) : 0;
+    if (cpos >= 0 && cpos < (int32_t)cur_len && cur_t[cpos] != '\n' && cur_t[cpos] != '\0') {
+        if (cur_t[cpos] == '#' && cpos + 7 < (int32_t)cur_len && cur_t[cpos + 7] == ' ') {
+            for (int k = 0; k < 8; k++) lv_textarea_delete_char_forward(ta);
+        } else if (cur_t[cpos] == '#' && cpos + 1 < (int32_t)cur_len && cur_t[cpos + 1] == '#') {
+            lv_textarea_delete_char_forward(ta);
+            lv_textarea_delete_char_forward(ta);
+        } else {
+            lv_textarea_delete_char_forward(ta);
+        }
+    }
+
     if (rep[0] == '#') {
         if (s_color_tag_open) {
             lv_textarea_add_char(ta, '#');
@@ -2580,6 +2594,30 @@ void SSHTerminal::erase_current_line()
     s_utf8_len = 0;
     s_utf8_expected = 0;
     lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);
+}
+
+void SSHTerminal::erase_to_end_of_line()
+{
+    if (!terminal_output) return;
+    const char* txt = lv_textarea_get_text(terminal_output);
+    if (!txt || txt[0] == '\0') return;
+
+    int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+    size_t txt_len = strlen(txt);
+    if (cpos < 0) cpos = 0;
+    if (cpos >= (int32_t)txt_len) return;
+
+    const char* nl = strchr(txt + cpos, '\n');
+    std::string kept(txt, cpos);
+    if (nl != nullptr) {
+        kept.append(nl);
+    }
+
+    lv_textarea_set_text(terminal_output, kept.c_str());
+    lv_textarea_set_cursor_pos(terminal_output, cpos);
+    s_color_tag_open = false;
+    s_utf8_len = 0;
+    s_utf8_expected = 0;
 }
 
 std::string SSHTerminal::strip_ansi_codes(const char* data, size_t len)
@@ -2714,8 +2752,22 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                             }
                         }
                     } else if (cmd == 'K') {
-                        // Erase in line (\033[K or \033[0K)
-                        erase_current_line();
+                        // Erase in line
+                        if (params == "2") {
+                            // \033[2K: Erase entire current line
+                            erase_current_line();
+                        } else {
+                            // \033[K or \033[0K: Erase from cursor to end of line
+                            erase_to_end_of_line();
+                        }
+                    } else if (cmd == 'P') {
+                        // DCH - Delete character(s) at cursor position
+                        int count = 1;
+                        if (!params.empty()) count = atoi(params.c_str());
+                        if (count < 1) count = 1;
+                        for (int k = 0; k < count; k++) {
+                            lv_textarea_delete_char_forward(terminal_output);
+                        }
                     } else if (cmd == 'D') {
                         // Non-destructive cursor left
                         int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
@@ -2753,10 +2805,21 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 
         // 2. Carriage return '\r'
         if (ch == '\r') {
+            s_utf8_expected = 0;
+            s_utf8_len = 0;
             if (i + 1 < len && data[i + 1] == '\n') {
                 i++;
                 ch = '\n';
             } else {
+                const char* cur_t = lv_textarea_get_text(terminal_output);
+                if (cur_t && cur_t[0] != '\0') {
+                    int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+                    if (cpos > (int32_t)strlen(cur_t)) cpos = strlen(cur_t);
+                    std::string before(cur_t, cpos);
+                    size_t last_nl = before.rfind('\n');
+                    int32_t sol = (last_nl != std::string::npos) ? (int32_t)(last_nl + 1) : 0;
+                    lv_textarea_set_cursor_pos(terminal_output, sol);
+                }
                 pending_cr = true;
                 continue;
             }
@@ -2764,10 +2827,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 
         if (pending_cr) {
             pending_cr = false;
-            if (ch != '\n') {
-                // Lone \r followed by characters: overwrite line
-                erase_current_line();
-            }
         }
 
         // 3. Line feed '\n'
@@ -2781,12 +2840,11 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         if (ch == '\b') {
             if (i + 2 < len && data[i + 1] == ' ' && data[i + 2] == '\b') {
                 i += 2;
-                lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);
                 lv_textarea_delete_char(terminal_output);
             } else if (i + 3 < len && data[i + 1] == '\x1B' && data[i + 2] == '[' && data[i + 3] == 'K') {
                 i += 3;
-                lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);
                 lv_textarea_delete_char(terminal_output);
+                erase_to_end_of_line();
             } else {
                 // Non-destructive cursor left
                 int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
@@ -2799,6 +2857,21 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 
         // 5. Literal '#' character escape
         if (ch == '#') {
+            s_utf8_expected = 0;
+            s_utf8_len = 0;
+            int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+            const char* cur_t = lv_textarea_get_text(terminal_output);
+            size_t cur_len = cur_t ? strlen(cur_t) : 0;
+            if (cpos >= 0 && cpos < (int32_t)cur_len && cur_t[cpos] != '\n' && cur_t[cpos] != '\0') {
+                if (cur_t[cpos] == '#' && cpos + 7 < (int32_t)cur_len && cur_t[cpos + 7] == ' ') {
+                    for (int k = 0; k < 8; k++) lv_textarea_delete_char_forward(terminal_output);
+                } else if (cur_t[cpos] == '#' && cpos + 1 < (int32_t)cur_len && cur_t[cpos + 1] == '#') {
+                    lv_textarea_delete_char_forward(terminal_output);
+                    lv_textarea_delete_char_forward(terminal_output);
+                } else {
+                    lv_textarea_delete_char_forward(terminal_output);
+                }
+            }
             // In LVGL recolor mode, '##' renders a single literal '#'
             lv_textarea_add_text(terminal_output, "##");
             continue;
@@ -2850,7 +2923,24 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         // 8. Regular ASCII character or tab
         s_utf8_expected = 0;
         s_utf8_len = 0;
-        lv_textarea_add_char(terminal_output, (uint32_t)(unsigned char)ch);
+        if (ch == '\t') {
+            lv_textarea_add_char(terminal_output, '\t');
+        } else {
+            int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+            const char* cur_t = lv_textarea_get_text(terminal_output);
+            size_t cur_len = cur_t ? strlen(cur_t) : 0;
+            if (cpos >= 0 && cpos < (int32_t)cur_len && cur_t[cpos] != '\n' && cur_t[cpos] != '\0') {
+                if (cur_t[cpos] == '#' && cpos + 7 < (int32_t)cur_len && cur_t[cpos + 7] == ' ') {
+                    for (int k = 0; k < 8; k++) lv_textarea_delete_char_forward(terminal_output);
+                } else if (cur_t[cpos] == '#' && cpos + 1 < (int32_t)cur_len && cur_t[cpos + 1] == '#') {
+                    lv_textarea_delete_char_forward(terminal_output);
+                    lv_textarea_delete_char_forward(terminal_output);
+                } else {
+                    lv_textarea_delete_char_forward(terminal_output);
+                }
+            }
+            lv_textarea_add_char(terminal_output, (uint32_t)(unsigned char)ch);
+        }
     }
 
     if (!is_user_scrolled_back) {

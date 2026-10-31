@@ -97,6 +97,7 @@ public:
     bool delete_key_from_nvs(const char* keyname);
     void show_loaded_keys();
     void erase_current_line();
+    void erase_to_end_of_line();
     
 private:
     lv_obj_t* terminal_screen;
