@@ -1545,6 +1545,9 @@ void SSHTerminal::handle_key_input(char key)
             else if (current_input == "clear") {
                 clear_terminal();
             }
+            else if (current_input == "keys" || current_input == "key") {
+                show_loaded_keys();
+            }
             else if (current_input == "pgup") {
                 scroll_page_up();
             }
@@ -1592,6 +1595,7 @@ void SSHTerminal::handle_key_input(char key)
                 append_text("  disconnect                 - Disconnect WiFi\n");
                 append_text("  ssh <HOST> <PORT> <U> <P>  - Connect via SSH (password)\n");
                 append_text("  sshkey <H> <P> <U> <KEY>   - Connect via SSH (private key)\n");
+                append_text("  keys                       - List all loaded SSH keys\n");
                 append_text("    Note: Place .pem keys in /sdcard/ssh_keys/ before use\n");
                 append_text("  exit                       - Disconnect SSH session\n");
                 append_text("  clear                      - Clear terminal\n");
@@ -3999,7 +4003,7 @@ void SSHTerminal::handle_tab_completion()
 
         if (!ssh_connected) {
             cmd_list = {
-                "autoconnect", "bottom", "clear", "connect", "disconnect",
+                "autoconnect", "bottom", "clear", "connect", "disconnect", "keys",
                 "exit", "forget", "help", "pgdn", "pgup", "save", "saved",
                 "scan", "scroll", "ssh", "sshkey", "status", "top", "version", "wifi"
             };

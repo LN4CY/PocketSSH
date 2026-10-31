@@ -253,6 +253,7 @@ These commands are executed locally on the device (not sent to SSH):
 - `connect <SSID> <PASS>` - Connect to WiFi network (use quotes for spaces: `connect "My WiFi" password`)
 - `ssh <HOST> <PORT> <USER> <PASS>` - Establish SSH connection (password auth)
 - `sshkey <HOST> <PORT> <USER> <KEYFILE>` - Establish SSH connection (public key auth from SD card)
+- `keys` - List all loaded SSH keys currently available in memory/SD card/NVS
 
 ## SSH Key Setup Guide
 
