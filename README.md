@@ -37,6 +37,14 @@ A portable SSH terminal client for the ESP32-S3 T-Deck Plus, featuring a hardwar
   - Resolved hardware bus sharing between ST7789 display and MicroSD card on `SPI2_HOST` (MISO=GPIO 38, SD_CS=GPIO 39, LCD_CS=GPIO 12).
   - MicroSD card remains permanently mounted at `/sdcard` during full runtime without display conflicts.
   - Dual-layer configuration persistence: `/sdcard/wifi.cfg` and `/sdcard/wificonfig.json` with seamless NVS fallback.
+- **Added**: Real-Time SSH Activity Indicator & Stream Batching
+  - Continuous status indication: displays `[WAIT...]` on command submission, live rotating spinner `[ / ]` `[ - ]` `[ \ ]` `[ | ]` during incoming byte streams, and `[ONLINE]` when idle.
+  - High-speed output chunk batching: flushes text in 256-byte chunks, reducing display lock contention by 1000x and completely eliminating device hangs during large command outputs.
+- **Added**: Multi-Mode Interrupt & Control Capabilities
+  - Dedicated on-screen `[^C]` touch button in the top bar for immediate command abort (SIGINT).
+  - Dedicated on-screen `[KEY]` touch button in the top bar to toggle the special keys drawer with one tap.
+  - Hardware trackball long-press (>400 ms) sends `Ctrl+C` (`\x03`) immediately in SSH mode.
+  - Hardware keyboard escape combos: press `Esc` followed by `C` for `Ctrl+C`, `Z` for `Ctrl+Z`, `D` for `Ctrl+D` (EOF), or `L` for `Ctrl+L` (clear screen).
 - **Added**: Interactive Desktop SSH Experience
   - Full-screen terminal experience: Automatically collapses local input bar upon connection and expands output to 53x24 character grid.
   - Blinking green cursor with hardware trackball non-destructive left/right positioning.

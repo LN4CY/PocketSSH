@@ -56,6 +56,10 @@ SSHTerminal::SSHTerminal()
       byte_counter_label(NULL),
       side_panel(NULL),
       scroll_indicator_label(NULL),
+      ctrl_c_btn(NULL),
+      keys_btn(NULL),
+      activity_label(NULL),
+      ssh_esc_prefix(false),
       is_user_scrolled_back(false),
       ssh_cmd_buffer(""),
       ssh_at_line_start(true),
@@ -746,6 +750,66 @@ void SSHTerminal::autoconnect_task(void* param)
     vTaskDelete(NULL);
 }
 
+ssize_t SSHTerminal::ssh_write_all(const char* data, size_t len)
+{
+    if (!channel || !data || len == 0) return -1;
+    size_t total = 0;
+    int retries = 0;
+    while (total < len && retries < 25) {
+        ssize_t n = libssh2_channel_write(channel, data + total, len - total);
+        if (n > 0) {
+            total += n;
+        } else if (n == LIBSSH2_ERROR_EAGAIN) {
+            retries++;
+            vTaskDelay(pdMS_TO_TICKS(5));
+        } else {
+            break;
+        }
+    }
+    return total;
+}
+
+void SSHTerminal::send_interrupt()
+{
+    if (ssh_connected && channel) {
+        ssh_write_all("\x03", 1);
+        ESP_LOGI(TAG, "Sent SIGINT (Ctrl+C)");
+        set_activity_status("[^C SENT]", 0xFF4040);
+        append_text("^C\n");
+    } else {
+        current_input.clear();
+        cursor_pos = 0;
+        append_text("^C\n");
+        update_input_display();
+    }
+}
+
+void SSHTerminal::set_activity_status(const char* text, uint32_t color_hex)
+{
+    if (!activity_label) return;
+    if (bsp_display_lock(pdMS_TO_TICKS(50))) {
+        lv_label_set_text(activity_label, text ? text : "");
+        lv_obj_set_style_text_color(activity_label, lv_color_hex(color_hex), 0);
+        bsp_display_unlock();
+    }
+}
+
+void SSHTerminal::ctrl_c_btn_event_cb(lv_event_t* e)
+{
+    SSHTerminal* terminal = (SSHTerminal*)lv_event_get_user_data(e);
+    if (terminal) {
+        terminal->send_interrupt();
+    }
+}
+
+void SSHTerminal::keys_btn_event_cb(lv_event_t* e)
+{
+    SSHTerminal* terminal = (SSHTerminal*)lv_event_get_user_data(e);
+    if (terminal) {
+        terminal->toggle_side_panel();
+    }
+}
+
 lv_obj_t* SSHTerminal::create_terminal_screen()
 {
     terminal_screen = lv_obj_create(NULL);
@@ -759,11 +823,52 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
     lv_obj_set_style_text_font(status_bar, &lv_font_montserrat_12, 0);
     lv_obj_align(status_bar, LV_ALIGN_TOP_LEFT, 5, 5);
     
+    // Live Activity / Wait Indicator (Green / Yellow / Cyan)
+    activity_label = lv_label_create(terminal_screen);
+    lv_label_set_text(activity_label, "");
+    lv_obj_set_style_text_color(activity_label, lv_color_hex(0x50FF50), 0);
+    lv_obj_set_style_text_font(activity_label, &lv_font_montserrat_10, 0);
+    lv_obj_align(activity_label, LV_ALIGN_TOP_LEFT, 115, 6);
+
+    // Dedicated Interrupt [^C] touch button (top right)
+    ctrl_c_btn = lv_btn_create(terminal_screen);
+    lv_obj_set_size(ctrl_c_btn, 32, 19);
+    lv_obj_align(ctrl_c_btn, LV_ALIGN_TOP_RIGHT, -98, 3);
+    lv_obj_set_style_bg_color(ctrl_c_btn, lv_color_hex(0x281010), 0);
+    lv_obj_set_style_bg_color(ctrl_c_btn, lv_color_hex(0xFF0000), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(ctrl_c_btn, lv_color_hex(0xFF4040), 0);
+    lv_obj_set_style_border_width(ctrl_c_btn, 1, 0);
+    lv_obj_set_style_radius(ctrl_c_btn, 3, 0);
+    lv_obj_set_style_pad_all(ctrl_c_btn, 0, 0);
+    lv_obj_t* ctrl_c_lbl = lv_label_create(ctrl_c_btn);
+    lv_label_set_text(ctrl_c_lbl, "^C");
+    lv_obj_set_style_text_color(ctrl_c_lbl, lv_color_hex(0xFF6060), 0);
+    lv_obj_set_style_text_font(ctrl_c_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(ctrl_c_lbl);
+    lv_obj_add_event_cb(ctrl_c_btn, ctrl_c_btn_event_cb, LV_EVENT_CLICKED, this);
+
+    // Dedicated Keys Panel [KEY] touch button (top right)
+    keys_btn = lv_btn_create(terminal_screen);
+    lv_obj_set_size(keys_btn, 36, 19);
+    lv_obj_align(keys_btn, LV_ALIGN_TOP_RIGHT, -58, 3);
+    lv_obj_set_style_bg_color(keys_btn, lv_color_hex(0x102810), 0);
+    lv_obj_set_style_bg_color(keys_btn, lv_color_hex(0x00CC00), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(keys_btn, lv_color_hex(0x00FF00), 0);
+    lv_obj_set_style_border_width(keys_btn, 1, 0);
+    lv_obj_set_style_radius(keys_btn, 3, 0);
+    lv_obj_set_style_pad_all(keys_btn, 0, 0);
+    lv_obj_t* keys_btn_lbl = lv_label_create(keys_btn);
+    lv_label_set_text(keys_btn_lbl, "KEY");
+    lv_obj_set_style_text_color(keys_btn_lbl, lv_color_hex(0x00FF00), 0);
+    lv_obj_set_style_text_font(keys_btn_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(keys_btn_lbl);
+    lv_obj_add_event_cb(keys_btn, keys_btn_event_cb, LV_EVENT_CLICKED, this);
+
     byte_counter_label = lv_label_create(terminal_screen);
     lv_label_set_text(byte_counter_label, "0 B");
     lv_obj_set_style_text_color(byte_counter_label, lv_color_hex(0x00FFFF), 0);
-    lv_obj_set_style_text_font(byte_counter_label, &lv_font_montserrat_12, 0);
-    lv_obj_align(byte_counter_label, LV_ALIGN_TOP_RIGHT, -5, 5);
+    lv_obj_set_style_text_font(byte_counter_label, &lv_font_montserrat_10, 0);
+    lv_obj_align(byte_counter_label, LV_ALIGN_TOP_RIGHT, -5, 6);
 
     terminal_output = lv_textarea_create(terminal_screen);
     lv_obj_set_size(terminal_output, lv_pct(100), lv_pct(75));
@@ -982,6 +1087,44 @@ void SSHTerminal::handle_key_input(char key)
     // FULL RAW INTERACTIVE SSH MODE (Desktop Experience)
     // ========================================================
     if (ssh_connected && channel) {
+        // Handle keyboard Esc prefix shortcut: Esc + C -> Ctrl+C, Esc + Z -> Ctrl+Z, Esc + D -> Ctrl+D
+        if (ssh_esc_prefix) {
+            ssh_esc_prefix = false;
+            if (key == 'c' || key == 'C') {
+                send_interrupt();
+                return;
+            } else if (key == 'z' || key == 'Z') {
+                ssh_write_all("\x1A", 1);
+                set_activity_status("[^Z SENT]", 0xFFFF50);
+                return;
+            } else if (key == 'd' || key == 'D') {
+                ssh_write_all("\x04", 1);
+                return;
+            } else if (key == 'l' || key == 'L') {
+                ssh_write_all("\x0C", 1);
+                return;
+            } else if (key == 27) {
+                // Esc pressed twice: send raw Esc
+                ssh_write_all("\x1B", 1);
+                return;
+            } else {
+                char seq[2] = { '\x1B', key };
+                ssh_write_all(seq, 2);
+                return;
+            }
+        }
+
+        if (key == 27) {
+            if (!ssh_cmd_buffer.empty()) {
+                ssh_cmd_buffer.clear();
+                ssh_at_line_start = false;
+                append_text(" [cancelled]\n");
+                return;
+            }
+            ssh_esc_prefix = true;
+            return;
+        }
+
         if (key == '\n' || key == '\r') {
             if (!ssh_cmd_buffer.empty()) {
                 append_text("\n");
@@ -992,31 +1135,21 @@ void SSHTerminal::handle_key_input(char key)
                 return;
             }
             ssh_at_line_start = true;
-            libssh2_channel_write(channel, "\r", 1);
+            ssh_write_all("\r", 1);
+            set_activity_status("[WAIT...]", 0xFFFF50);
             scroll_to_bottom();
             return;
         }
         else if (key == 8 || key == 127) {
             if (!ssh_cmd_buffer.empty()) {
                 ssh_cmd_buffer.pop_back();
-                lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);
                 lv_textarea_delete_char(terminal_output);
                 if (ssh_cmd_buffer.empty()) {
                     ssh_at_line_start = true;
                 }
                 return;
             }
-            libssh2_channel_write(channel, "\x7F", 1);
-            return;
-        }
-        else if (key == 27) {
-            if (!ssh_cmd_buffer.empty()) {
-                ssh_cmd_buffer.clear();
-                ssh_at_line_start = false;
-                append_text(" [cancelled]\n");
-                return;
-            }
-            libssh2_channel_write(channel, "\x1B", 1);
+            ssh_write_all("\x7F", 1);
             return;
         }
         else if (ssh_at_line_start && (key == ':' || key == '~')) {
@@ -1048,13 +1181,13 @@ void SSHTerminal::handle_key_input(char key)
             return;
         }
         else if (key == '\t' || key == 9) {
-            libssh2_channel_write(channel, "\t", 1);
+            ssh_write_all("\t", 1);
             return;
         }
         else if ((unsigned char)key >= 1) {
             ssh_at_line_start = false;
             char k = key;
-            libssh2_channel_write(channel, &k, 1);
+            ssh_write_all(&k, 1);
             return;
         }
         return;
@@ -2204,6 +2337,7 @@ esp_err_t SSHTerminal::ssh_open_channel()
 esp_err_t SSHTerminal::disconnect()
 {
     ssh_connected = false;
+    set_activity_status("", 0x50FF50);
     
     if (channel) {
         libssh2_channel_free(channel);
@@ -2285,8 +2419,13 @@ void SSHTerminal::ssh_receive_task(void* param)
     SSHTerminal* terminal = (SSHTerminal*)param;
     char buffer[1024];
     ssize_t rc;
+    uint32_t last_rx_ms = 0;
+    bool is_busy = false;
+    uint8_t spin_idx = 0;
+    static const char* spin_chars[] = {"[ / ]", "[ - ]", "[ \\ ]", "[ | ]"};
 
     ESP_LOGI(TAG, "SSH receive task started");
+    terminal->set_activity_status("[ONLINE]", 0x50FF50);
 
     while (terminal->ssh_connected && terminal->channel) {
         rc = libssh2_channel_read(terminal->channel, buffer, sizeof(buffer) - 1);
@@ -2294,9 +2433,21 @@ void SSHTerminal::ssh_receive_task(void* param)
         if (rc > 0) {
             buffer[rc] = '\0';
             terminal->process_received_data(buffer, rc);
+            
+            spin_idx = (spin_idx + 1) % 4;
+            terminal->set_activity_status(spin_chars[spin_idx], 0x50FFFF);
+            last_rx_ms = (uint32_t)(esp_timer_get_time() / 1000);
+            is_busy = true;
             vTaskDelay(1);
         } else if (rc == LIBSSH2_ERROR_EAGAIN) {
             terminal->flush_display_buffer();
+            if (is_busy) {
+                uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+                if (now - last_rx_ms > 350) {
+                    terminal->set_activity_status("[ONLINE]", 0x50FF50);
+                    is_busy = false;
+                }
+            }
             vTaskDelay(pdMS_TO_TICKS(10));
         } else if (rc < 0) {
             ESP_LOGE(TAG, "Read error: %d", (int)rc);
@@ -2629,18 +2780,29 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 {
     bytes_received += len;
     
-    if (!bsp_display_lock(pdMS_TO_TICKS(100))) {
+    if (!bsp_display_lock(pdMS_TO_TICKS(500))) {
         return;
     }
 
     bool pending_cr = false;
     bool is_bold = false;
 
+    char text_batch[256];
+    size_t batch_len = 0;
+    auto flush_batch = [&]() {
+        if (batch_len > 0) {
+            text_batch[batch_len] = '\0';
+            lv_textarea_add_text(terminal_output, text_batch);
+            batch_len = 0;
+        }
+    };
+
     for (size_t i = 0; i < len; i++) {
         char ch = data[i];
 
         // 1. ANSI Escape sequences
         if (ch == '\x1B' || ch == '\033') {
+            flush_batch();
             if (pending_cr) {
                 pending_cr = false;
             }
@@ -2805,6 +2967,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 
         // 2. Carriage return '\r'
         if (ch == '\r') {
+            flush_batch();
             s_utf8_expected = 0;
             s_utf8_len = 0;
             if (i + 1 < len && data[i + 1] == '\n') {
@@ -2831,6 +2994,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 
         // 3. Line feed '\n'
         if (ch == '\n') {
+            flush_batch();
             lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);
             lv_textarea_add_char(terminal_output, '\n');
             continue;
@@ -2838,6 +3002,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 
         // 4. Backspace '\b'
         if (ch == '\b') {
+            flush_batch();
             if (i + 2 < len && data[i + 1] == ' ' && data[i + 2] == '\b') {
                 i += 2;
                 lv_textarea_delete_char(terminal_output);
@@ -2857,6 +3022,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 
         // 5. Literal '#' character escape
         if (ch == '#') {
+            flush_batch();
             s_utf8_expected = 0;
             s_utf8_len = 0;
             int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
@@ -2883,6 +3049,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 
         // 7. UTF-8 Multi-byte decoder & Smart Emoji Engine
         if ((unsigned char)ch >= 0x80) {
+            flush_batch();
             uint8_t u = (uint8_t)ch;
             if (u >= 0xC0 && u <= 0xF7) {
                 // Start of UTF-8 sequence (lead byte)
@@ -2924,12 +3091,24 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         s_utf8_expected = 0;
         s_utf8_len = 0;
         if (ch == '\t') {
+            flush_batch();
             lv_textarea_add_char(terminal_output, '\t');
+            continue;
+        }
+
+        int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+        const char* cur_t = lv_textarea_get_text(terminal_output);
+        size_t cur_len = cur_t ? strlen(cur_t) : 0;
+        if (cpos >= (int32_t)cur_len) {
+            // High-speed chunk batching when at the end of the line
+            text_batch[batch_len++] = ch;
+            if (batch_len >= sizeof(text_batch) - 1) {
+                flush_batch();
+            }
         } else {
-            int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
-            const char* cur_t = lv_textarea_get_text(terminal_output);
-            size_t cur_len = cur_t ? strlen(cur_t) : 0;
-            if (cpos >= 0 && cpos < (int32_t)cur_len && cur_t[cpos] != '\n' && cur_t[cpos] != '\0') {
+            // Overwrite mode when inserting in the middle of a line
+            flush_batch();
+            if (cpos >= 0 && cur_t[cpos] != '\n' && cur_t[cpos] != '\0') {
                 if (cur_t[cpos] == '#' && cpos + 7 < (int32_t)cur_len && cur_t[cpos + 7] == ' ') {
                     for (int k = 0; k < 8; k++) lv_textarea_delete_char_forward(terminal_output);
                 } else if (cur_t[cpos] == '#' && cpos + 1 < (int32_t)cur_len && cur_t[cpos + 1] == '#') {
@@ -2942,6 +3121,8 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
             lv_textarea_add_char(terminal_output, (uint32_t)(unsigned char)ch);
         }
     }
+
+    flush_batch();
 
     if (!is_user_scrolled_back) {
         lv_obj_scroll_to_y(terminal_output, LV_COORD_MAX, LV_ANIM_OFF);

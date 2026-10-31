@@ -98,6 +98,9 @@ public:
     void show_loaded_keys();
     void erase_current_line();
     void erase_to_end_of_line();
+    void send_interrupt();
+    void set_activity_status(const char* text, uint32_t color_hex);
+    ssize_t ssh_write_all(const char* data, size_t len);
     
 private:
     lv_obj_t* terminal_screen;
@@ -108,6 +111,12 @@ private:
     lv_obj_t* byte_counter_label;
     lv_obj_t* side_panel;
     lv_obj_t* scroll_indicator_label;
+    lv_obj_t* ctrl_c_btn;
+    lv_obj_t* keys_btn;
+    lv_obj_t* activity_label;
+    bool ssh_esc_prefix;
+    static void ctrl_c_btn_event_cb(lv_event_t* e);
+    static void keys_btn_event_cb(lv_event_t* e);
     bool is_user_scrolled_back;
     void update_scroll_indicator();
     static void terminal_scroll_event_cb(lv_event_t* e);

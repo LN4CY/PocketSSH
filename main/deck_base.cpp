@@ -211,10 +211,15 @@ void trackball_task(void *param)
             uint32_t press_duration = (xTaskGetTickCount() * portTICK_PERIOD_MS) - press_start_time;
             
             if (ssh_terminal) {
-                if (press_duration >= LONG_PRESS_MS) {
-                    // Long press: Delete current history entry
-                    ESP_LOGI("TRACKBALL", "Long press detected (%lu ms) - deleting command", press_duration);
-                    ssh_terminal->delete_current_history_entry();
+                if (press_duration >= 400) {
+                    // Long press (>400ms):
+                    if (ssh_terminal->is_connected()) {
+                        ESP_LOGI("TRACKBALL", "Long press in SSH (%lu ms) - sending Ctrl+C", press_duration);
+                        ssh_terminal->send_interrupt();
+                    } else {
+                        ESP_LOGI("TRACKBALL", "Long press detected (%lu ms) - deleting command", press_duration);
+                        ssh_terminal->delete_current_history_entry();
+                    }
                 } else {
                     // Short press:
                     // If terminal is scrolled back, snap immediately back to bottom!
