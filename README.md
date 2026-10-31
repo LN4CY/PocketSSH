@@ -32,6 +32,60 @@ A portable SSH terminal client for the ESP32-S3 T-Deck Plus, featuring a hardwar
 
 ## Version History
 
+### v1.3.0 (October 31, 2026)
+- **Added**: MicroSD Card Permanent Mount & Shared SPI Bus Architecture
+  - Resolved hardware bus sharing between ST7789 display and MicroSD card on `SPI2_HOST` (MISO=GPIO 38, SD_CS=GPIO 39, LCD_CS=GPIO 12).
+  - MicroSD card remains permanently mounted at `/sdcard` during full runtime without display conflicts.
+  - Dual-layer configuration persistence: `/sdcard/wifi.cfg` and `/sdcard/wificonfig.json` with seamless NVS fallback.
+- **Added**: Interactive Desktop SSH Experience
+  - Full-screen terminal experience: Automatically collapses local input bar upon connection and expands output to 53x24 character grid.
+  - Blinking green cursor with hardware trackball non-destructive left/right positioning.
+  - Line-erasure support (`\r\033[K` and lone `\r`) resolving command history line-appending on Up/Down arrows.
+  - Standard Unix backspace handling (`VERASE=127` and `\b \b` destructive erasure).
+  - Remote tab auto-completion with candidate list display.
+- **Added**: Interactive Remote SSH Key Retrieval
+  - Retrieve private keys directly from connected SSH servers via `:getkey <remote_path> [key_name]`.
+  - Automatically verifies and persists keys to both `/sdcard/ssh_keys/<name>.pem` and NVS.
+  - Dedicated `Get Key` button in the touch slide-out Keys panel.
+- **Added**: Full ANSI SGR 256-Color & TrueColor Engine
+  - Full support for 16 standard/bright ANSI colors, 256-color palette (xterm color cube & grayscale ramp), and 24-bit TrueColor (`\033[38;2;r;g;bm`).
+  - Literal `#` escaping preventing syntax conflicts with shell prompts and comments.
+- **Added**: Smart Emoji Log Engine & Multi-Byte UTF-8 Stream Parser
+  - Multi-byte UTF-8 stream decoding for 1-4 byte sequences across network packet boundaries.
+  - Automated translation of 65+ common developer, DevOps, Git, and CI/CD emojis (`✅`, `❌`, `⚠️`, `ℹ️`, `🚀`, `🔥`, `📦`, `🐛`, `✨`, `🎉`, etc.) into compact, color-coded badges.
+  - Clean normalization of arrows (`->`), bullets (`*`), quotes, and box-drawing characters.
+  - Graceful fallback for unmapped emojis (`[?]` badge) eliminating mojibake and character corruption.
+- **Added**: Interactive 2.4 GHz WiFi Network Scanner (`scan` / `wifi scan`)
+  - Scans all 2.4 GHz channels and lists visible networks sorted by signal strength (RSSI)
+  - Displays SSID, RSSI (dBm), Channel, and Authentication mode (Open, WEP, WPA, WPA2, WPA3, WPA2/WPA3)
+  - Automatically deduplicates multiple BSSIDs for the same SSID (mesh/repeater networks)
+  - Connect easily by scan index number: `connect <#> [password]` (e.g. `connect 1 mypass`)
+- **Added**: WiFi Persistence & Auto-Connect on Boot
+  - Automatically saves successfully connected WiFi credentials to NVS storage
+  - Non-blocking background auto-connect at startup allows immediate device usage
+  - Quick reconnect using saved credentials by typing `connect` without arguments
+  - Management commands: `status` (shows IP, subnet, gateway, DNS, RSSI, MAC), `saved`, `forget`, `autoconnect <on|off>`
+- **Fixed**: WiFi connection failures on modern routers & security types
+  - Fixed WPA3 Personal / SAE authentication by enabling Hash-to-Element (H2E) and Hunting-and-Pecking (`WPA3_SAE_PWE_BOTH`)
+  - Fixed authmode threshold rejection of Open, WEP, and WPA networks (`WIFI_AUTH_OPEN`)
+  - Switched to all-channel scanning with strongest-signal sorting (`WIFI_ALL_CHANNEL_SCAN`), preventing connection drops on mesh & dual-band setups
+  - Enabled channels 1-13 worldwide regulatory domain support
+  - Disabled WiFi modem power save (`WIFI_PS_NONE`) to eliminate connection drops and SSH latency
+- **Added**: Human-readable disconnect reason codes
+  - Pinpoints the exact cause of connection failures (e.g. `[201] AP not found - 2.4 GHz only`, `[202] Authentication failed`, `[15] Handshake timeout`)
+- **Added**: Terminal Scrollback & Backlog Navigation
+  - Full hardware trackball scrolling: Roll Up to scroll back into command history and server logs; Roll Down to scroll forward
+  - Instant return to bottom: Clicking the trackball or tapping the top `[^ SCROLL]` indicator immediately snaps back to live prompt
+  - Non-disruptive backlog reading: Background text arrivals preserve the user's scroll position while reading
+  - 4-way trackball navigation: Trackball Left/Right cycles command history (when prompt is empty), moves the cursor (when typing), or controls remote shell cursor in SSH
+  - Touch drag scrolling: Swipe vertically on the terminal output with smooth momentum and elastic boundary feedback
+  - Visible green scrollbar: Automatically indicates current position and scroll depth
+  - Expanded 16 KB scrollback capacity with smart FIFO circular trimming (no more sudden `...[cleared]` wipes)
+  - Slide-out keys panel additions: Dedicated touch buttons for `PgUp`, `PgDn`, `Top`, and `Bottom`
+  - Terminal commands for scrolling: `pgup`, `pgdn`, `top`, `bottom`, and `scroll` (cheat-sheet)
+- **Fixed**: UI and keyboard freezing during WiFi operations
+  - Resolved display lock starvation in keypad and trackball tasks during connection timeouts
+
 ### v1.2.0 (Faburary 1, 2026)
 - **Added**: SSH public key authentication support
   - SD card SSH key management - automatically loads all `.pem` files from `/sdcard/ssh_keys/` on boot
@@ -123,16 +177,35 @@ Quick access to commonly used control sequences:
 
 ### First-Time Setup
 
-1. **Connect to WiFi**:
-   ```
-   connect <SSID> <PASSWORD>
-   ```
-   Example: `connect MyNetwork MyPassword123`
-   
-   **For SSIDs or passwords with spaces**, use double quotes:
-   ```
-   connect "My WiFi Network" "my password 123"
-   ```
+1. **WiFi Management & Connection**:
+   - **Scan for nearby 2.4 GHz networks**:
+     ```
+     scan
+     ```
+   - **Connect by scan index**:
+     ```
+     connect 1 MyPassword123
+     ```
+   - **Connect by SSID**:
+     ```
+     connect MyNetwork MyPassword123
+     ```
+   - **Connect with spaces** (use double quotes):
+     ```
+     connect "My WiFi Network" "my password 123"
+     ```
+   - **Connect to Open networks** (no password required):
+     ```
+     connect GuestWiFi
+     ```
+   - **Reconnect to saved network**:
+     ```
+     connect
+     ```
+   - **Check status & IP**:
+     ```
+     status
+     ```
 
 2. **Connect to SSH Server**:
    

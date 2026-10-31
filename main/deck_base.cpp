@@ -148,12 +148,9 @@ void keypad_task(void *param)
                 continue;  // Skip processing this key
             }
 
-            // Send key input to SSH terminal with display lock
+            // Send key input to SSH terminal
             if (ssh_terminal && ssh_screen) {
-                if (bsp_display_lock(0)) {
-                    ssh_terminal->handle_key_input((char)key);
-                    bsp_display_unlock();
-                }
+                ssh_terminal->handle_key_input((char)key);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(50)); // Shorter delay for better responsiveness
@@ -164,6 +161,8 @@ void trackball_task(void *param)
 {
     static bool last_up = true;
     static bool last_down = true;
+    static bool last_left = true;
+    static bool last_right = true;
     static bool last_press = true;
     static uint32_t press_start_time = 0;
     const uint32_t LONG_PRESS_MS = 1000; // 1 second for long press
@@ -171,21 +170,35 @@ void trackball_task(void *param)
     while (1) {
         bool up = gpio_get_level(BOARD_TBOX_G01);
         bool down = gpio_get_level(BOARD_TBOX_G03);
+        bool left = gpio_get_level(BOARD_TBOX_G04);
+        bool right = gpio_get_level(BOARD_TBOX_G02);
         bool press = gpio_get_level(BOARD_BOOT_PIN);
         
-        // Detect falling edge (button press)
+        // Detect falling edge on Up (roller scrolled up) -> Scroll Terminal Up
         if (!up && last_up) {
-            // Non-blocking: prioritize screen updates, drop input if display is busy
-            if (ssh_terminal && bsp_display_lock(0)) {
-                ssh_terminal->navigate_history(1); // Older command
-                bsp_display_unlock();
+            if (ssh_terminal) {
+                ssh_terminal->scroll_up(28);
             }
         }
+        
+        // Detect falling edge on Down (roller scrolled down) -> Scroll Terminal Down
         if (!down && last_down) {
-            // Non-blocking: prioritize screen updates, drop input if display is busy
-            if (ssh_terminal && bsp_display_lock(0)) {
-                ssh_terminal->navigate_history(-1); // Newer command
-                bsp_display_unlock();
+            if (ssh_terminal) {
+                ssh_terminal->scroll_down(28);
+            }
+        }
+
+        // Detect falling edge on Left (roller scrolled left) -> History older or move cursor left
+        if (!left && last_left) {
+            if (ssh_terminal) {
+                ssh_terminal->handle_trackball_left();
+            }
+        }
+
+        // Detect falling edge on Right (roller scrolled right) -> History newer or move cursor right
+        if (!right && last_right) {
+            if (ssh_terminal) {
+                ssh_terminal->handle_trackball_right();
             }
         }
         
@@ -197,69 +210,119 @@ void trackball_task(void *param)
             // Button released - check duration
             uint32_t press_duration = (xTaskGetTickCount() * portTICK_PERIOD_MS) - press_start_time;
             
-            if (ssh_terminal && bsp_display_lock(0)) {
+            if (ssh_terminal) {
                 if (press_duration >= LONG_PRESS_MS) {
                     // Long press: Delete current history entry
                     ESP_LOGI("TRACKBALL", "Long press detected (%lu ms) - deleting command", press_duration);
                     ssh_terminal->delete_current_history_entry();
                 } else {
-                    // Short press: Execute current input (like Enter key)
-                    ESP_LOGI("TRACKBALL", "Short press detected (%lu ms) - executing current input", press_duration);
-                    ssh_terminal->handle_key_input('\n');
+                    // Short press:
+                    // If terminal is scrolled back, snap immediately back to bottom!
+                    // If already at bottom, execute current input (like Enter key)
+                    if (ssh_terminal->is_scrolled_back()) {
+                        ESP_LOGI("TRACKBALL", "Short press: returning to bottom");
+                        ssh_terminal->scroll_to_bottom();
+                    } else {
+                        ESP_LOGI("TRACKBALL", "Short press: executing current input");
+                        ssh_terminal->handle_key_input('\n');
+                    }
                 }
-                bsp_display_unlock();
             }
         }
         
         last_up = up;
         last_down = down;
+        last_left = left;
+        last_right = right;
         last_press = press;
         
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(15)); // Fast 15ms sampling for responsive trackball spin
     }
 }
 
+static uint8_t s_detected_touch_addr = 0;
+
 esp_err_t _bsp_touch_new(const bsp_touch_config_t *config, esp_lcd_touch_handle_t *ret_touch)
 {
-    /* Initilize I2C */
+    /* Initialize I2C */
     esp_err_t ret = bsp_i2c_init();
     if (ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "Initialize I2C Fail");
+        ESP_LOGE(TAG, "Initialize I2C Fail: %s", esp_err_to_name(ret));
         return ret;
     }
 
-    /* Initialize touch */
-    const esp_lcd_touch_config_t tp_cfg = {
-        .x_max = BSP_LCD_V_RES,
-        .y_max = BSP_LCD_H_RES,
-        .rst_gpio_num = GPIO_NUM_NC,
-        .int_gpio_num = GPIO_NUM_16,
-        .levels = {
-            .reset = 0,
-            .interrupt = 0,
-        },
-        .flags = {
-            .swap_xy = true,
-            .mirror_x = true,
-            .mirror_y = false,
-        },
-        .process_coordinates = NULL,
-        .interrupt_callback = NULL,
-        .user_data = NULL,
-        .driver_data = NULL,
-    };
-    esp_lcd_panel_io_handle_t tp_io_handle = NULL;
-    ESP_LOGI("Touch", "Initialize LCD Touch: GT911");
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-    esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
-    #pragma GCC diagnostic pop
-    tp_io_config.scl_speed_hz = CONFIG_BSP_I2C_CLK_SPEED_HZ;
+    // Allow peripheral power rail (GT911) to settle
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     i2c_handle = bsp_i2c_get_handle();
-    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(i2c_handle, &tp_io_config, &tp_io_handle), "TOuch", "");
-    return esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, ret_touch);
+
+    // GT911 can power up with address 0x5D or 0x14 depending on boot strapping
+    const uint8_t try_addrs[] = {
+        ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS,        // 0x5D
+        ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP  // 0x14
+    };
+
+    for (size_t i = 0; i < sizeof(try_addrs) / sizeof(try_addrs[0]); i++) {
+        uint8_t addr = try_addrs[i];
+        ESP_LOGI("Touch", "Probing GT911 touch at I2C address 0x%02X...", addr);
+
+        esp_lcd_touch_io_gt911_config_t gt911_driver_cfg = {
+            .dev_addr = addr,
+        };
+
+        const esp_lcd_touch_config_t tp_cfg = {
+            .x_max = BSP_LCD_V_RES, // 240
+            .y_max = BSP_LCD_H_RES, // 320
+            .rst_gpio_num = GPIO_NUM_NC,
+            // Use polling mode (GPIO_NUM_NC) so LVGL periodically polls every 30ms.
+            // Hardware interrupt edge detection on GPIO 16 is notoriously unreliable
+            // across T-Deck hardware revisions, which locks up touch in event mode.
+            .int_gpio_num = GPIO_NUM_NC,
+            .levels = {
+                .reset = 0,
+                .interrupt = 0,
+            },
+            .flags = {
+                .swap_xy = true,
+                .mirror_x = true,
+                .mirror_y = false,
+            },
+            .process_coordinates = NULL,
+            .interrupt_callback = NULL,
+            .user_data = NULL,
+            .driver_data = &gt911_driver_cfg,
+        };
+
+        esp_lcd_panel_io_handle_t tp_io_handle = NULL;
+        esp_lcd_panel_io_i2c_config_t tp_io_config = {};
+        tp_io_config.dev_addr = addr;
+        tp_io_config.control_phase_bytes = 1;
+        tp_io_config.dc_bit_offset = 0;
+        tp_io_config.lcd_cmd_bits = 16;
+        tp_io_config.flags.disable_control_phase = 1;
+        tp_io_config.scl_speed_hz = 100000; // 100 kHz standard for GT911 on shared bus
+
+        esp_err_t io_ret = esp_lcd_new_panel_io_i2c(i2c_handle, &tp_io_config, &tp_io_handle);
+        if (io_ret != ESP_OK) {
+            ESP_LOGW("Touch", "Failed to create panel IO for addr 0x%02X: %s", addr, esp_err_to_name(io_ret));
+            continue;
+        }
+
+        esp_err_t touch_ret = esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, ret_touch);
+        if (touch_ret == ESP_OK && *ret_touch != NULL) {
+            s_detected_touch_addr = addr;
+            ESP_LOGI("Touch", "GT911 touch controller detected and initialized at 0x%02X!", addr);
+            return ESP_OK;
+        } else {
+            ESP_LOGW("Touch", "GT911 not responding at 0x%02X (%s)", addr, esp_err_to_name(touch_ret));
+            esp_lcd_panel_io_del(tp_io_handle);
+        }
+    }
+
+    ESP_LOGW("Touch", "No GT911 touch controller detected on I2C bus (standard non-touch T-Deck)");
+    *ret_touch = NULL;
+    return ESP_ERR_NOT_FOUND;
 }
 
 void device_init(void)
@@ -289,7 +352,7 @@ void device_init(void)
     gpio_set_direction(BOARD_SPI_MISO, GPIO_MODE_INPUT);
     gpio_set_pull_mode(BOARD_SPI_MISO, GPIO_PULLUP_ONLY);
 
-    // Initialize trackball GPIOs for command history navigation
+    // Initialize trackball GPIOs for scrolling and navigation (all 4 directions)
     gpio_reset_pin(BOARD_TBOX_G01);
     gpio_set_direction(BOARD_TBOX_G01, GPIO_MODE_INPUT);
     gpio_set_pull_mode(BOARD_TBOX_G01, GPIO_PULLUP_ONLY);
@@ -297,6 +360,14 @@ void device_init(void)
     gpio_reset_pin(BOARD_TBOX_G03);
     gpio_set_direction(BOARD_TBOX_G03, GPIO_MODE_INPUT);
     gpio_set_pull_mode(BOARD_TBOX_G03, GPIO_PULLUP_ONLY);
+
+    gpio_reset_pin(BOARD_TBOX_G04);
+    gpio_set_direction(BOARD_TBOX_G04, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(BOARD_TBOX_G04, GPIO_PULLUP_ONLY);
+
+    gpio_reset_pin(BOARD_TBOX_G02);
+    gpio_set_direction(BOARD_TBOX_G02, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(BOARD_TBOX_G02, GPIO_PULLUP_ONLY);
     
     // Initialize trackball press button (BOOT button on GPIO 0)
     gpio_reset_pin(BOARD_BOOT_PIN);
@@ -304,7 +375,8 @@ void device_init(void)
     gpio_set_pull_mode(BOARD_BOOT_PIN, GPIO_PULLUP_ONLY);
 }
 
-// Forward declaration
+// Forward declarations
+esp_err_t mount_sdcard(void);
 void load_ssh_keys_from_sd(SSHTerminal* terminal);
 
 extern "C" void app_main(void)
@@ -319,38 +391,41 @@ extern "C" void app_main(void)
     /* Initialize device GPIOs */
     device_init();
 
-    /* Load SSH keys from SD card BEFORE LVGL initialization */
-    // Note: Create a temporary terminal instance just for loading keys
-    SSHTerminal* temp_terminal = new SSHTerminal();
-    load_ssh_keys_from_sd(temp_terminal);
-
-    /* Initialize display and LVGL */
+    /* Initialize display and LVGL (Initializes SPI2_HOST with display) */
     lv_display_t *disp = bsp_display_start();
 
     /* Set display brightness to 100% */
     bsp_display_backlight_on();
 
-    /* Initialize touch */
+    /* Mount SD card on shared SPI2 bus concurrently with display */
+    esp_err_t sd_status = mount_sdcard();
+
+    /* Initialize touch (auto-detects GT911 on 0x5D or 0x14 with polling mode) */
     esp_lcd_touch_handle_t touch_handle = NULL;
     const bsp_touch_config_t bsp_touch_cfg = {};
-    _bsp_touch_new(&bsp_touch_cfg, &touch_handle);
+    esp_err_t touch_status = _bsp_touch_new(&bsp_touch_cfg, &touch_handle);
 
-    /* Add touch input (for selected screen) */
-    const lvgl_port_touch_cfg_t touch_cfg = {
-        .disp = disp,
-        .handle = touch_handle,
-        .scale = {.x = 0, .y = 0},
-    };
-
-    lvgl_port_add_touch(&touch_cfg);
+    if (touch_status == ESP_OK && touch_handle != NULL) {
+        /* Add touch input (for selected screen) */
+        const lvgl_port_touch_cfg_t touch_cfg = {
+            .disp = disp,
+            .handle = touch_handle,
+            .scale = {.x = 0, .y = 0},
+        };
+        lvgl_port_add_touch(&touch_cfg);
+        ESP_LOGI(TAG, "Touch input registered with LVGL");
+    } else {
+        ESP_LOGI(TAG, "Touch controller not found - running in Trackball & Keyboard mode");
+    }
 
     bsp_display_lock(0);
 
     // Show splash screen animation
     show_splash_screen();
 
-    // Use the terminal instance that already has loaded keys
-    ssh_terminal = temp_terminal;
+    // Create terminal instance
+    ssh_terminal = new SSHTerminal();
+    load_ssh_keys_from_sd(ssh_terminal);
     ssh_screen = ssh_terminal->create_terminal_screen();
     
     // Display version and initial instructions
@@ -359,6 +434,22 @@ extern "C" void app_main(void)
 #else
     ssh_terminal->append_text("PocketSSH Terminal Ready\n");
 #endif
+
+    // Display storage status
+    if (sd_status == ESP_OK) {
+        ssh_terminal->append_text("Storage: MicroSD mounted (/sdcard)\n");
+    } else {
+        ssh_terminal->append_text("Storage: MicroSD not mounted (NVS fallback)\n");
+    }
+
+    // Display touch controller status
+    if (touch_status == ESP_OK && touch_handle != NULL) {
+        char touch_info[64];
+        snprintf(touch_info, sizeof(touch_info), "Touch: GT911 active (0x%02X)\n", s_detected_touch_addr);
+        ssh_terminal->append_text(touch_info);
+    } else {
+        ssh_terminal->append_text("Touch: Hardware not detected (Trackball navigation mode)\n");
+    }
 
     // Display loaded SSH keys
     auto loaded_keys = ssh_terminal->get_loaded_key_names();
@@ -371,8 +462,8 @@ extern "C" void app_main(void)
         }
         ssh_terminal->append_text("\n");
     } else {
-        ssh_terminal->append_text("\nNo SSH keys found on SD card.\n");
-        ssh_terminal->append_text("Place .pem files in /sdcard/ssh_keys/\n\n");
+        ssh_terminal->append_text("\nNo SSH keys found in /sdcard/ssh_keys/ or NVS.\n");
+        ssh_terminal->append_text("Use 'getkey <path>' or copy .pem files to /sdcard/ssh_keys/\n\n");
     }
     
     // Update status bar to show initial battery voltage
@@ -380,15 +471,65 @@ extern "C" void app_main(void)
 
     bsp_display_unlock();
 
+    // Check for saved WiFi network and auto-connect
+    ssh_terminal->try_autoconnect();
+
     xTaskCreate(keypad_task, "keypad_task", 4096, NULL, 5, NULL);
     
     xTaskCreate(trackball_task, "trackball_task", 4096, NULL, 5, NULL);
 }
 
+static sdmmc_card_t* s_sdcard = nullptr;
+static bool s_sdcard_mounted = false;
+
+bool is_sd_card_mounted() {
+    return s_sdcard_mounted;
+}
+
+esp_err_t mount_sdcard(void)
+{
+    if (s_sdcard_mounted) {
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "Mounting SD card on shared SPI2 bus (CS=%d)...", BOARD_SDCARD_CS);
+
+    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
+        .format_if_mount_failed = false,
+        .max_files = 8,
+        .allocation_unit_size = 16 * 1024,
+        .disk_status_check_enable = false,
+        .use_one_fat = false
+    };
+
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.slot = SPI2_HOST;
+    host.max_freq_khz = 20000; // 20 MHz
+
+    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_config.gpio_cs = (gpio_num_t)BOARD_SDCARD_CS;
+    slot_config.host_id = SPI2_HOST;
+
+    esp_err_t ret = esp_vfs_fat_sdspi_mount("/sdcard", &host, &slot_config, &mount_config, &s_sdcard);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to mount SD card on SPI2: %s", esp_err_to_name(ret));
+        s_sdcard_mounted = false;
+        return ret;
+    }
+
+    s_sdcard_mounted = true;
+    ESP_LOGI(TAG, "SD card successfully mounted at /sdcard on SPI2_HOST");
+
+    // Ensure ssh_keys directory exists
+    mkdir("/sdcard/ssh_keys", 0755);
+
+    return ESP_OK;
+}
+
 /*
  * Load SSH private keys from SD card
- * Reads all .pem files from /sdcard/ssh_keys/ directory and loads them into memory
- * Must be called BEFORE LVGL initialization to avoid SD card access conflicts
+ * Reads all .pem files from /sdcard/ssh_keys/ directory into memory.
+ * SD card remains permanently mounted for continuous read/write.
  */
 void load_ssh_keys_from_sd(SSHTerminal* terminal)
 {
@@ -397,165 +538,83 @@ void load_ssh_keys_from_sd(SSHTerminal* terminal)
         return;
     }
 
-    ESP_LOGI(TAG, "Starting SD card key loading...");
-
-    // SD card mount configuration
-    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
-        .format_if_mount_failed = false,
-        .max_files = 5,
-        .allocation_unit_size = 16 * 1024,
-        .disk_status_check_enable = false,
-        .use_one_fat = false
-    };
-
-    sdmmc_card_t *card = NULL;
-    const char mount_point[] = "/sdcard";
-    
-    ESP_LOGI(TAG, "Mounting SD card...");
-    
-    // Configure SPI bus for SD card (T-Deck Plus uses SPI mode, not SDMMC)
-    spi_bus_config_t bus_cfg = {
-        .mosi_io_num = BOARD_SPI_MOSI,
-        .miso_io_num = BOARD_SPI_MISO,
-        .sclk_io_num = BOARD_SPI_SCK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = 4000,
-    };
-    
-    esp_err_t ret = spi_bus_initialize(SPI3_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "Failed to initialize SPI bus (%s)", esp_err_to_name(ret));
+    if (!s_sdcard_mounted) {
+        ESP_LOGW(TAG, "SD card is not mounted, skipping SD key scan");
         return;
     }
-    
-    ESP_LOGI(TAG, "SPI bus initialized");
-    
-    // Configure SPI host for SD card
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    
-    // Configure SD card SPI device
-    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs = BOARD_SDCARD_CS;
-    slot_config.host_id = SPI3_HOST;
-    
-    ESP_LOGI(TAG, "Attempting to mount SD card on SPI3...");
-    
-    // Mount SD card using SPI mode
-    ret = esp_vfs_fat_sdspi_mount(mount_point, &host, &slot_config, &mount_config, &card);
-    
-    if (ret != ESP_OK) {
-        if (ret == ESP_FAIL) {
-            ESP_LOGE(TAG, "Failed to mount filesystem");
-        } else {
-            ESP_LOGE(TAG, "Failed to initialize SD card (%s)", esp_err_to_name(ret));
-        }
-        return;
-    }
-    
-    ESP_LOGI(TAG, "SD card mounted successfully");
 
-    // Open the ssh_keys directory
     const char* keys_dir = "/sdcard/ssh_keys";
-    ESP_LOGI(TAG, "Opening directory: %s", keys_dir);
+    ESP_LOGI(TAG, "Scanning for keys in: %s", keys_dir);
     DIR* dir = opendir(keys_dir);
-    
     if (!dir) {
-        ESP_LOGW(TAG, "Failed to open directory %s - creating it", keys_dir);
+        ESP_LOGW(TAG, "Directory %s not found - creating it", keys_dir);
         mkdir(keys_dir, 0755);
         dir = opendir(keys_dir);
         if (!dir) {
-            ESP_LOGE(TAG, "Still cannot open directory after creation");
-            esp_vfs_fat_sdcard_unmount(mount_point, card);
-            spi_bus_free(SPI3_HOST);
+            ESP_LOGE(TAG, "Cannot open or create %s", keys_dir);
             return;
         }
     }
 
-    ESP_LOGI(TAG, "Directory opened, scanning for .pem files...");
-
-    // Read all .pem files from directory
     struct dirent* entry;
     int keys_loaded = 0;
     int files_found = 0;
-    
+
     while ((entry = readdir(dir)) != NULL) {
         files_found++;
-        ESP_LOGI(TAG, "Found file: %s", entry->d_name);
-        
-        // Skip . and .. entries
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
             continue;
         }
-        
-        // Check if file has .pem or .PEM extension (case-insensitive)
+
         size_t name_len = strlen(entry->d_name);
-        if (name_len < 5) {
-            ESP_LOGD(TAG, "Skipping file (name too short): %s", entry->d_name);
-            continue;
-        }
-        
+        if (name_len < 5) continue;
+
         const char* ext = entry->d_name + name_len - 4;
-        if (strcasecmp(ext, ".pem") != 0) {
-            ESP_LOGI(TAG, "Skipping non-PEM file: %s", entry->d_name);
+        if (strcasecmp(ext, ".pem") != 0 && strcasecmp(ext, ".key") != 0 && strcasecmp(ext, ".rsa") != 0) {
             continue;
         }
-        
-        ESP_LOGI(TAG, "Processing PEM file: %s", entry->d_name);
-        
-        // Build full file path
+
         char filepath[256];
         snprintf(filepath, sizeof(filepath), "%s/%s", keys_dir, entry->d_name);
-        
-        // Open and read the key file
+
         FILE* f = fopen(filepath, "rb");
         if (!f) {
             ESP_LOGE(TAG, "Failed to open key file: %s", filepath);
             continue;
         }
-        
-        // Get file size
+
         fseek(f, 0, SEEK_END);
         long file_size = ftell(f);
         fseek(f, 0, SEEK_SET);
-        
+
         if (file_size <= 0 || file_size > 16384) {
             ESP_LOGW(TAG, "Invalid key file size: %s (%ld bytes)", entry->d_name, file_size);
             fclose(f);
             continue;
         }
-        
-        // Allocate buffer and read key data
+
         char* key_data = (char*)malloc(file_size + 1);
         if (!key_data) {
             ESP_LOGE(TAG, "Failed to allocate memory for key: %s", entry->d_name);
             fclose(f);
             continue;
         }
-        
+
         size_t bytes_read = fread(key_data, 1, file_size, f);
         fclose(f);
-        
+
         if (bytes_read != (size_t)file_size) {
             ESP_LOGE(TAG, "Failed to read complete key file: %s", entry->d_name);
             free(key_data);
             continue;
         }
-        
-        key_data[file_size] = '\0';  // Null terminate
-        
-        // Load key into terminal's memory
+
+        key_data[file_size] = '\0';
         terminal->load_key_from_memory(entry->d_name, key_data, file_size);
         free(key_data);
         keys_loaded++;
     }
-    
+
     closedir(dir);
-    
-    ESP_LOGI(TAG, "Total files found: %d, Keys loaded: %d", files_found, keys_loaded);
-    
-    // Unmount SD card and deinitialize SPI bus
-    esp_vfs_fat_sdcard_unmount(mount_point, card);
-    spi_bus_free(SPI3_HOST);
-    ESP_LOGI(TAG, "SD card unmounted, %d SSH keys loaded", keys_loaded);
+    ESP_LOGI(TAG, "SD key scan complete: %d keys loaded from %d files", keys_loaded, files_found);
 }

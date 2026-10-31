@@ -9,15 +9,20 @@
 
 #include "lvgl.h"
 #include "esp_err.h"
+#include "esp_wifi_types.h"
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include "libssh2.h"
 #include "battery_measurement.hpp"
 
 #define SSH_MAX_LINE_LENGTH 128
 #define SSH_MAX_LINES 100
 #define SSH_BUFFER_SIZE 4096
+
+// External check for SD card status from deck_base
+bool is_sd_card_mounted();
 
 class SSHTerminal
 {
@@ -35,6 +40,8 @@ public:
     void append_text(const char* text);
     void clear_terminal();
     void handle_key_input(char key);
+    void handle_tab_completion();
+    void set_ssh_ui_mode(bool ssh_active);
     void send_command(const char* cmd);
     void navigate_history(int direction);
     void delete_current_history_entry();
@@ -44,8 +51,35 @@ public:
     void move_cursor_home();
     void move_cursor_end();
     
+    // Terminal scrollback navigation
+    void scroll_up(int32_t pixels = 28);
+    void scroll_down(int32_t pixels = 28);
+    void scroll_page_up();
+    void scroll_page_down();
+    void scroll_to_top();
+    void scroll_to_bottom();
+    bool is_scrolled_back();
+    void handle_trackball_left();
+    void handle_trackball_right();
+    bool is_ssh_active() const { return ssh_connected; }
+    void send_special_key_direct(const char* sequence);
+    
     esp_err_t init_wifi(const char* ssid, const char* password);
     bool is_wifi_connected();
+    esp_err_t scan_wifi();
+    void show_wifi_status();
+    void try_autoconnect();
+    
+    // WiFi configuration & persistence (Dual SD Card + NVS)
+    void save_wifi_config(const char* ssid, const char* password);
+    bool load_wifi_config(std::string& ssid, std::string& password);
+    void clear_wifi_config();
+    void save_wifi_to_nvs(const char* ssid, const char* password);
+    bool load_wifi_from_nvs(std::string& ssid, std::string& password);
+    void clear_wifi_nvs();
+    bool get_wifi_autoconnect_enabled();
+    void set_wifi_autoconnect_enabled(bool enabled);
+    static const char* wifi_reason_to_string(uint8_t reason);
     
     lv_obj_t* get_screen() { return terminal_screen; }
     
@@ -55,16 +89,32 @@ public:
     void load_key_from_memory(const char* keyname, const char* key_data, size_t key_len);
     const char* get_loaded_key(const char* keyname, size_t* len);
     std::vector<std::string> get_loaded_key_names();
+    esp_err_t fetch_remote_key(const char* remote_path, const char* local_name = NULL);
+    bool save_key_to_sd_and_nvs(const char* keyname, const char* key_data, size_t key_len);
+    bool delete_key_from_sd_and_nvs(const char* keyname);
+    void save_key_to_nvs(const char* keyname, const char* key_data);
+    void load_keys_from_nvs();
+    bool delete_key_from_nvs(const char* keyname);
+    void show_loaded_keys();
+    void erase_current_line();
     
 private:
     lv_obj_t* terminal_screen;
     lv_obj_t* terminal_output;
     lv_obj_t* input_label;
+    lv_obj_t* input_container;
     lv_obj_t* status_bar;
     lv_obj_t* byte_counter_label;
     lv_obj_t* side_panel;
+    lv_obj_t* scroll_indicator_label;
+    bool is_user_scrolled_back;
+    void update_scroll_indicator();
+    static void terminal_scroll_event_cb(lv_event_t* e);
     
     std::string current_input;
+    std::string ssh_cmd_buffer;
+    bool ssh_at_line_start;
+    void process_escape_command(const std::string& raw_cmd);
     size_t cursor_pos;
     size_t bytes_received;
     std::vector<std::string> command_history;
@@ -82,6 +132,9 @@ private:
     int64_t last_display_update;
     
     bool wifi_connected;
+    std::string connected_ssid;
+    std::vector<wifi_ap_record_t> cached_scan_results;
+    
     bool ssh_connected;
     bool battery_initialized;
     
@@ -116,6 +169,9 @@ private:
     static void battery_update_cb(lv_timer_t* timer);
     static void history_save_cb(lv_timer_t* timer);
     static void ssh_receive_task(void* param);
+    static void autoconnect_task(void* param);
+    
+    static esp_err_t ensure_wifi_driver_started(SSHTerminal* terminal);
     
     static int waitsocket(int socket_fd, LIBSSH2_SESSION *session);
     esp_err_t ssh_authenticate(const char* username, const char* password);
