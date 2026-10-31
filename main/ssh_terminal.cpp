@@ -57,9 +57,9 @@ SSHTerminal::SSHTerminal()
       side_panel(NULL),
       scroll_indicator_label(NULL),
       ctrl_c_btn(NULL),
+      esc_btn(NULL),
       keys_btn(NULL),
       activity_label(NULL),
-      ssh_esc_prefix(false),
       is_user_scrolled_back(false),
       ssh_cmd_buffer(""),
       ssh_at_line_start(true),
@@ -802,6 +802,22 @@ void SSHTerminal::ctrl_c_btn_event_cb(lv_event_t* e)
     }
 }
 
+void SSHTerminal::esc_btn_event_cb(lv_event_t* e)
+{
+    SSHTerminal* terminal = (SSHTerminal*)lv_event_get_user_data(e);
+    if (terminal) {
+        if (terminal->ssh_connected && terminal->channel) {
+            terminal->ssh_write_all("\x1B", 1);
+            terminal->set_activity_status("[ESC]", 0x50FFFF);
+        } else {
+            terminal->current_input.clear();
+            terminal->cursor_pos = 0;
+            terminal->append_text(" [esc]\n");
+            terminal->update_input_display();
+        }
+    }
+}
+
 void SSHTerminal::keys_btn_event_cb(lv_event_t* e)
 {
     SSHTerminal* terminal = (SSHTerminal*)lv_event_get_user_data(e);
@@ -829,6 +845,23 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
     lv_obj_set_style_text_color(activity_label, lv_color_hex(0x50FF50), 0);
     lv_obj_set_style_text_font(activity_label, &lv_font_montserrat_10, 0);
     lv_obj_align(activity_label, LV_ALIGN_TOP_LEFT, 115, 6);
+
+    // Dedicated [ESC] touch button (top right)
+    esc_btn = lv_btn_create(terminal_screen);
+    lv_obj_set_size(esc_btn, 32, 19);
+    lv_obj_align(esc_btn, LV_ALIGN_TOP_RIGHT, -134, 3);
+    lv_obj_set_style_bg_color(esc_btn, lv_color_hex(0x152030), 0);
+    lv_obj_set_style_bg_color(esc_btn, lv_color_hex(0x3060FF), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(esc_btn, lv_color_hex(0x4080FF), 0);
+    lv_obj_set_style_border_width(esc_btn, 1, 0);
+    lv_obj_set_style_radius(esc_btn, 3, 0);
+    lv_obj_set_style_pad_all(esc_btn, 0, 0);
+    lv_obj_t* esc_lbl = lv_label_create(esc_btn);
+    lv_label_set_text(esc_lbl, "ESC");
+    lv_obj_set_style_text_color(esc_lbl, lv_color_hex(0x70B0FF), 0);
+    lv_obj_set_style_text_font(esc_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(esc_lbl);
+    lv_obj_add_event_cb(esc_btn, esc_btn_event_cb, LV_EVENT_CLICKED, this);
 
     // Dedicated Interrupt [^C] touch button (top right)
     ctrl_c_btn = lv_btn_create(terminal_screen);
@@ -1083,37 +1116,16 @@ void SSHTerminal::clear_terminal()
 
 void SSHTerminal::handle_key_input(char key)
 {
+    // Physical Keyboard Alt+C (T-Deck coprocessor sends 0x0C) or standard Ctrl+C (0x03)
+    if ((uint8_t)key == 0x0C || (uint8_t)key == 0x03) {
+        send_interrupt();
+        return;
+    }
+
     // ========================================================
     // FULL RAW INTERACTIVE SSH MODE (Desktop Experience)
     // ========================================================
     if (ssh_connected && channel) {
-        // Handle keyboard Esc prefix shortcut: Esc + C -> Ctrl+C, Esc + Z -> Ctrl+Z, Esc + D -> Ctrl+D
-        if (ssh_esc_prefix) {
-            ssh_esc_prefix = false;
-            if (key == 'c' || key == 'C') {
-                send_interrupt();
-                return;
-            } else if (key == 'z' || key == 'Z') {
-                ssh_write_all("\x1A", 1);
-                set_activity_status("[^Z SENT]", 0xFFFF50);
-                return;
-            } else if (key == 'd' || key == 'D') {
-                ssh_write_all("\x04", 1);
-                return;
-            } else if (key == 'l' || key == 'L') {
-                ssh_write_all("\x0C", 1);
-                return;
-            } else if (key == 27) {
-                // Esc pressed twice: send raw Esc
-                ssh_write_all("\x1B", 1);
-                return;
-            } else {
-                char seq[2] = { '\x1B', key };
-                ssh_write_all(seq, 2);
-                return;
-            }
-        }
-
         if (key == 27) {
             if (!ssh_cmd_buffer.empty()) {
                 ssh_cmd_buffer.clear();
@@ -1121,7 +1133,8 @@ void SSHTerminal::handle_key_input(char key)
                 append_text(" [cancelled]\n");
                 return;
             }
-            ssh_esc_prefix = true;
+            ssh_write_all("\x1B", 1);
+            set_activity_status("[ESC]", 0x50FFFF);
             return;
         }
 

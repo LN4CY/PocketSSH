@@ -112,10 +112,11 @@ private:
     lv_obj_t* side_panel;
     lv_obj_t* scroll_indicator_label;
     lv_obj_t* ctrl_c_btn;
+    lv_obj_t* esc_btn;
     lv_obj_t* keys_btn;
     lv_obj_t* activity_label;
-    bool ssh_esc_prefix;
     static void ctrl_c_btn_event_cb(lv_event_t* e);
+    static void esc_btn_event_cb(lv_event_t* e);
     static void keys_btn_event_cb(lv_event_t* e);
     bool is_user_scrolled_back;
     void update_scroll_indicator();
