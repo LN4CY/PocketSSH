@@ -844,12 +844,12 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
     lv_label_set_text(activity_label, "");
     lv_obj_set_style_text_color(activity_label, lv_color_hex(0x50FF50), 0);
     lv_obj_set_style_text_font(activity_label, &lv_font_montserrat_10, 0);
-    lv_obj_align(activity_label, LV_ALIGN_TOP_LEFT, 115, 6);
+    lv_obj_align(activity_label, LV_ALIGN_TOP_LEFT, 68, 6);
 
     // Dedicated [ESC] touch button (top right)
     esc_btn = lv_btn_create(terminal_screen);
-    lv_obj_set_size(esc_btn, 32, 19);
-    lv_obj_align(esc_btn, LV_ALIGN_TOP_RIGHT, -134, 3);
+    lv_obj_set_size(esc_btn, 30, 18);
+    lv_obj_align(esc_btn, LV_ALIGN_TOP_RIGHT, -108, 3);
     lv_obj_set_style_bg_color(esc_btn, lv_color_hex(0x152030), 0);
     lv_obj_set_style_bg_color(esc_btn, lv_color_hex(0x3060FF), LV_STATE_PRESSED);
     lv_obj_set_style_border_color(esc_btn, lv_color_hex(0x4080FF), 0);
@@ -865,8 +865,8 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
 
     // Dedicated Interrupt [^C] touch button (top right)
     ctrl_c_btn = lv_btn_create(terminal_screen);
-    lv_obj_set_size(ctrl_c_btn, 32, 19);
-    lv_obj_align(ctrl_c_btn, LV_ALIGN_TOP_RIGHT, -98, 3);
+    lv_obj_set_size(ctrl_c_btn, 30, 18);
+    lv_obj_align(ctrl_c_btn, LV_ALIGN_TOP_RIGHT, -74, 3);
     lv_obj_set_style_bg_color(ctrl_c_btn, lv_color_hex(0x281010), 0);
     lv_obj_set_style_bg_color(ctrl_c_btn, lv_color_hex(0xFF0000), LV_STATE_PRESSED);
     lv_obj_set_style_border_color(ctrl_c_btn, lv_color_hex(0xFF4040), 0);
@@ -882,8 +882,8 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
 
     // Dedicated Keys Panel [KEY] touch button (top right)
     keys_btn = lv_btn_create(terminal_screen);
-    lv_obj_set_size(keys_btn, 36, 19);
-    lv_obj_align(keys_btn, LV_ALIGN_TOP_RIGHT, -58, 3);
+    lv_obj_set_size(keys_btn, 34, 18);
+    lv_obj_align(keys_btn, LV_ALIGN_TOP_RIGHT, -36, 3);
     lv_obj_set_style_bg_color(keys_btn, lv_color_hex(0x102810), 0);
     lv_obj_set_style_bg_color(keys_btn, lv_color_hex(0x00CC00), LV_STATE_PRESSED);
     lv_obj_set_style_border_color(keys_btn, lv_color_hex(0x00FF00), 0);
@@ -901,7 +901,7 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
     lv_label_set_text(byte_counter_label, "0 B");
     lv_obj_set_style_text_color(byte_counter_label, lv_color_hex(0x00FFFF), 0);
     lv_obj_set_style_text_font(byte_counter_label, &lv_font_montserrat_10, 0);
-    lv_obj_align(byte_counter_label, LV_ALIGN_TOP_RIGHT, -5, 6);
+    lv_obj_align(byte_counter_label, LV_ALIGN_TOP_RIGHT, -4, 6);
 
     terminal_output = lv_textarea_create(terminal_screen);
     lv_obj_set_size(terminal_output, lv_pct(100), lv_pct(75));
@@ -945,12 +945,19 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
     // Event callback for touch scroll tracking
     lv_obj_add_event_cb(terminal_output, terminal_scroll_event_cb, LV_EVENT_SCROLL, this);
     
-    // Scroll indicator label in top-middle: shows when viewing history, clickable to jump to bottom
+    // Floating Scroll indicator badge inside terminal window (y=30), completely clear of top bar
     scroll_indicator_label = lv_label_create(terminal_screen);
     lv_label_set_text(scroll_indicator_label, "[^ SCROLL]");
     lv_obj_set_style_text_color(scroll_indicator_label, lv_color_hex(0xFFFF00), 0); // Yellow
     lv_obj_set_style_text_font(scroll_indicator_label, &lv_font_montserrat_10, 0);
-    lv_obj_align(scroll_indicator_label, LV_ALIGN_TOP_MID, 0, 6);
+    lv_obj_set_style_bg_color(scroll_indicator_label, lv_color_hex(0x181800), 0);
+    lv_obj_set_style_bg_opa(scroll_indicator_label, LV_OPA_90, 0);
+    lv_obj_set_style_border_color(scroll_indicator_label, lv_color_hex(0xAAAA00), 0);
+    lv_obj_set_style_border_width(scroll_indicator_label, 1, 0);
+    lv_obj_set_style_radius(scroll_indicator_label, 3, 0);
+    lv_obj_set_style_pad_hor(scroll_indicator_label, 5, 0);
+    lv_obj_set_style_pad_ver(scroll_indicator_label, 2, 0);
+    lv_obj_align(scroll_indicator_label, LV_ALIGN_TOP_RIGHT, -12, 30);
     lv_obj_add_flag(scroll_indicator_label, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(scroll_indicator_label, [](lv_event_t* e) {
         SSHTerminal* term = (SSHTerminal*)lv_event_get_user_data(e);
@@ -3207,12 +3214,9 @@ void SSHTerminal::update_status_bar()
     
     if (!wifi_connected) {
         status += LV_SYMBOL_WIFI " OFF";
-        lv_obj_set_style_text_color(status_bar, lv_color_hex(0xFF0000), 0);
-    } else if (!ssh_connected) {
-        status += LV_SYMBOL_WIFI " | " LV_SYMBOL_CLOSE " SSH";
-        lv_obj_set_style_text_color(status_bar, lv_color_hex(0xFFFF00), 0);
+        lv_obj_set_style_text_color(status_bar, lv_color_hex(0xFF4040), 0);
     } else {
-        status += LV_SYMBOL_WIFI " | " LV_SYMBOL_OK " SSH";
+        status += LV_SYMBOL_WIFI;
         lv_obj_set_style_text_color(status_bar, lv_color_hex(0x00FF00), 0);
     }
     

@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_check.h"
+#include "esp_timer.h"
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 #include "bsp/touch.h"
@@ -55,48 +56,81 @@ static SSHTerminal *ssh_terminal = NULL;
 // Splash screen variables
 static lv_obj_t *splash_screen = NULL;
 static lv_obj_t *splash_img = NULL;
+static lv_obj_t *splash_countdown_label = NULL;
+static lv_obj_t *splash_bar = NULL;
 static lv_timer_t *splash_timer = NULL;
 static int splash_frame = 0;
+static uint32_t splash_start_ms = 0;
 static const lv_image_dsc_t* pepboy_frames[] = {
     &pepboy_0, &pepboy_1, &pepboy_2, &pepboy_3,
     &pepboy_4, &pepboy_5, &pepboy_6, &pepboy_7
 };
 
-// Dismiss splash screen (called by touch or keyboard)
+// Dismiss splash screen (called by touch, keyboard, trackball, or 30s timeout)
 void dismiss_splash_screen()
 {
+    if (!splash_screen) return;
+
     if (splash_timer) {
         lv_timer_delete(splash_timer);
         splash_timer = NULL;
     }
+    bool locked = bsp_display_lock(pdMS_TO_TICKS(100));
     if (splash_screen) {
-        bsp_display_lock(0);
         lv_scr_load(ssh_screen);
         lv_obj_delete(splash_screen);
         splash_screen = NULL;
+        splash_img = NULL;
+        splash_countdown_label = NULL;
+        splash_bar = NULL;
+    }
+    if (locked) {
         bsp_display_unlock();
     }
 }
 
-// Touch event handler for splash screen - skip on touch
+// Touch event handler for splash screen - skip on touch after 1.5s grace period
 void splash_touch_cb(lv_event_t * e)
 {
-    dismiss_splash_screen();
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    if (now_ms - splash_start_ms >= 1500) {
+        dismiss_splash_screen();
+    }
 }
 
-// Splash screen animation callback
+// Splash screen animation and 30-second countdown callback (125ms per frame)
 void splash_timer_cb(lv_timer_t * timer)
 {
-    // Update to next frame
-    splash_frame++;
-    
-    // Wrap frame index (8 frames total) - loop indefinitely
-    if (splash_frame >= 8) {
-        splash_frame = 0;
+    if (!splash_screen) return;
+
+    // Update Pip-Boy walking frame
+    splash_frame = (splash_frame + 1) % 8;
+    if (splash_img) {
+        lv_image_set_src(splash_img, pepboy_frames[splash_frame]);
     }
-    
-    // Update image
-    lv_image_set_src(splash_img, pepboy_frames[splash_frame]);
+
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    uint32_t elapsed_ms = now_ms - splash_start_ms;
+
+    // 30 seconds reached: automatically transition to main screen
+    if (elapsed_ms >= 30000) {
+        dismiss_splash_screen();
+        return;
+    }
+
+    // Update live countdown
+    if (splash_countdown_label) {
+        int remaining_sec = (30000 - elapsed_ms + 999) / 1000;
+        if (remaining_sec < 0) remaining_sec = 0;
+        char buf[32];
+        snprintf(buf, sizeof(buf), "Starting in %ds...", remaining_sec);
+        lv_label_set_text(splash_countdown_label, buf);
+    }
+
+    // Update progress bar (0 to 300)
+    if (splash_bar) {
+        lv_bar_set_value(splash_bar, elapsed_ms / 100, LV_ANIM_OFF);
+    }
 }
 
 void show_splash_screen()
@@ -104,24 +138,117 @@ void show_splash_screen()
     // Create splash screen
     splash_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(splash_screen, lv_color_black(), 0);
-    
-    // Add touch event to skip splash screen
+    lv_obj_set_style_bg_opa(splash_screen, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(splash_screen, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Add touch event to skip splash screen (after grace period)
     lv_obj_add_event_cb(splash_screen, splash_touch_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_flag(splash_screen, LV_OBJ_FLAG_CLICKABLE);
-    
-    // Create image object centered on screen
+
+    // Left side: Animated Pip-Boy Walking Character (109 x 180)
     splash_img = lv_image_create(splash_screen);
     lv_image_set_src(splash_img, &pepboy_0);
-    lv_obj_align(splash_img, LV_ALIGN_CENTER, 0, 0);
-    
+    lv_obj_align(splash_img, LV_ALIGN_LEFT_MID, 8, 0);
+
+    // Right side: Pip-Boy Retro Fallout / Terminal Info Card
+    lv_obj_t* info_card = lv_obj_create(splash_screen);
+    lv_obj_set_size(info_card, 192, 216);
+    lv_obj_align(info_card, LV_ALIGN_TOP_RIGHT, -8, 12);
+    lv_obj_set_style_bg_color(info_card, lv_color_hex(0x081208), 0);
+    lv_obj_set_style_border_color(info_card, lv_color_hex(0x00AA00), 0);
+    lv_obj_set_style_border_width(info_card, 1, 0);
+    lv_obj_set_style_radius(info_card, 6, 0);
+    lv_obj_set_style_pad_all(info_card, 8, 0);
+    lv_obj_clear_flag(info_card, LV_OBJ_FLAG_SCROLLABLE);
+
+    // 1. Title
+    lv_obj_t* title_lbl = lv_label_create(info_card);
+    lv_label_set_text(title_lbl, "POCKET SSH");
+    lv_obj_set_style_text_color(title_lbl, lv_color_hex(0x00FF00), 0);
+    lv_obj_set_style_text_font(title_lbl, &lv_font_montserrat_18, 0);
+    lv_obj_align(title_lbl, LV_ALIGN_TOP_LEFT, 2, 0);
+
+    // 2. Subtitle / App Description
+    lv_obj_t* desc_lbl = lv_label_create(info_card);
+    lv_label_set_text(desc_lbl, "Handheld SSH Client\nLilyGO T-Deck Plus");
+    lv_obj_set_style_text_color(desc_lbl, lv_color_hex(0x60E060), 0);
+    lv_obj_set_style_text_font(desc_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_align(desc_lbl, LV_ALIGN_TOP_LEFT, 2, 26);
+
+    // 3. Divider Line 1
+    lv_obj_t* div1 = lv_obj_create(info_card);
+    lv_obj_set_size(div1, 172, 1);
+    lv_obj_set_style_bg_color(div1, lv_color_hex(0x005500), 0);
+    lv_obj_set_style_border_width(div1, 0, 0);
+    lv_obj_align(div1, LV_ALIGN_TOP_LEFT, 2, 58);
+
+    // 4. Version Number
+    lv_obj_t* ver_lbl = lv_label_create(info_card);
+#ifdef POCKETSSH_VERSION
+    lv_label_set_text(ver_lbl, "Version: v" POCKETSSH_VERSION);
+#else
+    lv_label_set_text(ver_lbl, "Version: v1.3.0");
+#endif
+    lv_obj_set_style_text_color(ver_lbl, lv_color_hex(0xFFFF50), 0);
+    lv_obj_set_style_text_font(ver_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_align(ver_lbl, LV_ALIGN_TOP_LEFT, 2, 66);
+
+    // 5. Author
+    lv_obj_t* author_lbl = lv_label_create(info_card);
+    lv_label_set_text(author_lbl, "Author: LN4CY");
+    lv_obj_set_style_text_color(author_lbl, lv_color_hex(0x50FFFF), 0);
+    lv_obj_set_style_text_font(author_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_align(author_lbl, LV_ALIGN_TOP_LEFT, 2, 86);
+
+    // 6. Author Subtitle
+    lv_obj_t* author_sub = lv_label_create(info_card);
+    lv_label_set_text(author_sub, "David Remba");
+    lv_obj_set_style_text_color(author_sub, lv_color_hex(0x38B0B0), 0);
+    lv_obj_set_style_text_font(author_sub, &lv_font_montserrat_10, 0);
+    lv_obj_align(author_sub, LV_ALIGN_TOP_LEFT, 2, 104);
+
+    // 7. Divider Line 2
+    lv_obj_t* div2 = lv_obj_create(info_card);
+    lv_obj_set_size(div2, 172, 1);
+    lv_obj_set_style_bg_color(div2, lv_color_hex(0x005500), 0);
+    lv_obj_set_style_border_width(div2, 0, 0);
+    lv_obj_align(div2, LV_ALIGN_TOP_LEFT, 2, 122);
+
+    // 8. 30-Second Countdown Label
+    splash_countdown_label = lv_label_create(info_card);
+    lv_label_set_text(splash_countdown_label, "Starting in 30s...");
+    lv_obj_set_style_text_color(splash_countdown_label, lv_color_hex(0x00FF50), 0);
+    lv_obj_set_style_text_font(splash_countdown_label, &lv_font_montserrat_12, 0);
+    lv_obj_align(splash_countdown_label, LV_ALIGN_TOP_LEFT, 2, 130);
+
+    // 9. 30-Second Progress Bar
+    splash_bar = lv_bar_create(info_card);
+    lv_obj_set_size(splash_bar, 172, 7);
+    lv_bar_set_range(splash_bar, 0, 300);
+    lv_bar_set_value(splash_bar, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(splash_bar, lv_color_hex(0x003300), 0);
+    lv_obj_set_style_bg_color(splash_bar, lv_color_hex(0x00FF00), LV_PART_INDICATOR);
+    lv_obj_set_style_border_color(splash_bar, lv_color_hex(0x008800), 0);
+    lv_obj_set_style_border_width(splash_bar, 1, 0);
+    lv_obj_set_style_radius(splash_bar, 3, 0);
+    lv_obj_align(splash_bar, LV_ALIGN_TOP_LEFT, 2, 150);
+
+    // 10. Skip Hint
+    lv_obj_t* skip_hint = lv_label_create(info_card);
+    lv_label_set_text(skip_hint, "[ Tap / Key to Skip ]");
+    lv_obj_set_style_text_color(skip_hint, lv_color_hex(0x408040), 0);
+    lv_obj_set_style_text_font(skip_hint, &lv_font_montserrat_10, 0);
+    lv_obj_align(skip_hint, LV_ALIGN_BOTTOM_MID, 0, -2);
+
     // Load splash screen
     lv_scr_load(splash_screen);
-    
-    // Reset counter
+
+    // Reset frame and record start time
     splash_frame = 0;
-    
-    // Create timer for animation (100ms per frame for smooth walking animation)
-    splash_timer = lv_timer_create(splash_timer_cb, 150, NULL);
+    splash_start_ms = (uint32_t)(esp_timer_get_time() / 1000);
+
+    // Timer: every 125ms for smooth 8fps animation and live countdown
+    splash_timer = lv_timer_create(splash_timer_cb, 125, NULL);
 }
 
 void keypad_task(void *param)
@@ -141,11 +268,14 @@ void keypad_task(void *param)
         {
             ESP_LOGI("KEYPAD", "Key Pressed: %c", (unsigned char)key);
 
-            // If splash screen is active, dismiss it on any key press
+            // If splash screen is active, dismiss it on any key press after grace period (1.5s)
             if (splash_screen) {
-                dismiss_splash_screen();
-                vTaskDelay(pdMS_TO_TICKS(50));
-                continue;  // Skip processing this key
+                uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                if (now_ms - splash_start_ms >= 1500) {
+                    dismiss_splash_screen();
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                    continue;  // Skip processing this key
+                }
             }
 
             // Send key input to SSH terminal
@@ -211,7 +341,12 @@ void trackball_task(void *param)
             uint32_t press_duration = (xTaskGetTickCount() * portTICK_PERIOD_MS) - press_start_time;
             
             if (ssh_terminal) {
-                if (press_duration >= 400) {
+                if (splash_screen) {
+                    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                    if (now_ms - splash_start_ms >= 1500) {
+                        dismiss_splash_screen();
+                    }
+                } else if (press_duration >= 400) {
                     // Long press (>400ms):
                     if (ssh_terminal->is_connected()) {
                         ESP_LOGI("TRACKBALL", "Long press in SSH (%lu ms) - sending Ctrl+C", press_duration);
