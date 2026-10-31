@@ -390,6 +390,59 @@ ssh-keygen -p -m PEM -f ~/.ssh/id_rsa
 cp ~/.ssh/id_rsa ~/.ssh/id_rsa.backup
 ```
 
+---
+
+### Remote Key Fetching Guide (`:getkey` / `[Get Key]` Button)
+
+PocketSSH allows you to pull private keys directly over an active SSH session into `/sdcard/ssh_keys/` and device NVS without physically removing your SD card.
+
+#### 1. What to Do if the PEM File Does Not Exist on the Server
+If you try fetching a key before generating it on the server, `cat` will fail and PocketSSH will report that the key was not found.
+
+Connect to your remote server using standard password authentication (`ssh <host> <port> <user> <pass>`), and run the following commands in the remote shell:
+
+```bash
+# 1. Generate an RSA private key in PEM format (passphrase-less)
+ssh-keygen -t rsa -b 2048 -m PEM -f ~/.ssh/id_rsa -N ""
+
+# 2. Add the public key to authorized_keys so this key can log in
+cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+
+# 3. Ensure proper SSH permissions
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys ~/.ssh/id_rsa
+
+# 4. Verify the key header is in PEM format (must begin with "-----BEGIN RSA PRIVATE KEY-----")
+head -n 2 ~/.ssh/id_rsa
+```
+
+> [!IMPORTANT]
+> **Why `-m PEM` is required**: Modern Linux distributions and OpenSSH generate keys in OpenSSH format (`-----BEGIN OPENSSH PRIVATE KEY-----`) by default. The embedded cryptographic engine (`libssh2` with `mbedTLS`) requires **PKCS#1 PEM** format (`-----BEGIN RSA PRIVATE KEY-----`). Always include `-m PEM`.
+
+#### 2. Converting an Existing Server Key to PEM
+If your server already has a key at `~/.ssh/id_rsa` but it was created in OpenSSH format:
+```bash
+ssh-keygen -p -m PEM -f ~/.ssh/id_rsa
+```
+
+#### 3. Fetching the Key to PocketSSH
+Once the PEM key exists on the server:
+1. Tap the **`[KEY]`** button in the top bar to open the side panel, then tap **`[Get Key]`**.
+2. Or type the escape command directly into the terminal:
+   ```text
+   :getkey ~/.ssh/id_rsa pi_key
+   ```
+   *(Syntax: `:getkey <remote_path> [local_name]`)*
+
+PocketSSH will automatically:
+- Download and validate the PEM header.
+- Save the key to `/sdcard/ssh_keys/pi_key.pem`.
+- Persist the key into ESP32 NVS flash.
+- Register the key in memory so you can immediately connect with:
+  ```text
+  sshkey <HOST> <PORT> <USER> pi_key.pem
+  ```
+
 
 
 ## Architecture

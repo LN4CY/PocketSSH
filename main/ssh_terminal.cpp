@@ -3882,10 +3882,26 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
     libssh2_channel_close(exec_ch);
     libssh2_channel_free(exec_ch);
 
-    if (key_content.find("-----BEGIN") == std::string::npos ||
-        (key_content.find("KEY-----") == std::string::npos && key_content.find("PRIVATE") == std::string::npos)) {
-        append_text("[Error: Retrieved content does not appear to be a valid private key!]\n");
-        append_text("[Make sure the remote file exists and is readable]\n");
+    if (key_content.empty() || key_content.find("-----BEGIN") == std::string::npos) {
+        append_text("\n[Error: Key file not found or empty on server!]\n");
+        append_text("[To create a PEM key on remote server, run in shell:]\n");
+        append_text("  ssh-keygen -t rsa -b 2048 -m PEM -f ~/.ssh/id_rsa -N \"\"\n");
+        append_text("  cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys\n");
+        append_text("[Then tap 'Get Key' or run ':getkey ~/.ssh/id_rsa' again]\n\n");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    if (key_content.find("OPENSSH") != std::string::npos) {
+        append_text("\n[Warning: Key is in OpenSSH format! PocketSSH requires PEM format]\n");
+        append_text("[To convert this key on server, run in shell:]\n");
+        append_text("  ssh-keygen -p -m PEM -f ~/.ssh/id_rsa\n");
+        append_text("[Then tap 'Get Key' or run ':getkey ~/.ssh/id_rsa' again]\n\n");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (key_content.find("KEY-----") == std::string::npos && key_content.find("PRIVATE") == std::string::npos) {
+        append_text("\n[Error: Retrieved content does not appear to be a private key!]\n");
+        append_text("[Make sure the remote file exists and is a valid PEM key]\n\n");
         return ESP_ERR_INVALID_ARG;
     }
 
