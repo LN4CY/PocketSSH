@@ -25,6 +25,8 @@
 
 # PocketSSH
 
+[![PocketSSH CI & Simulation Tests](https://github.com/LN4CY/PocketSSH/actions/workflows/wokwi_test.yml/badge.svg)](https://github.com/LN4CY/PocketSSH/actions/workflows/wokwi_test.yml)
+
 PocketSSH is a standalone, ultra-portable SSH2 client and terminal environment engineered specifically for the **LilyGO T-Deck / T-Deck Plus** (ESP32-S3). Featuring a retro Pip-Boy amber/green CRT aesthetic, PocketSSH provides a full-fledged interactive terminal experience with physical keyboard entry, dual-mode trackball navigation, touch gesture controls, MicroSD-backed public key management, remote key fetching, and a 25-test host Verification & Validation (V&V) suite.
 
 ![PocketSSH Screenshot](misc/screenshot_01.jpeg)
