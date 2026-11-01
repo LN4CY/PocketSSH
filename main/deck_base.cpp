@@ -26,6 +26,7 @@
 #include "esp_lcd_touch_gt911.h"
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
+#include "driver/uart_vfs.h"
 
 #include "utilities.h"
 #include "c3_keyboard.hpp"
@@ -406,6 +407,10 @@ void trackball_task(void *param)
 
 void serial_terminal_task(void *param)
 {
+    uart_vfs_dev_port_set_rx_line_endings(0, ESP_LINE_ENDINGS_LF);
+    uart_vfs_dev_port_set_tx_line_endings(0, ESP_LINE_ENDINGS_CRLF);
+    uart_vfs_dev_use_nonblocking(0);
+
     setvbuf(stdin, NULL, _IONBF, 0);
     setvbuf(stdout, NULL, _IONBF, 0);
 
@@ -419,6 +424,9 @@ void serial_terminal_task(void *param)
                 continue;
             }
             last_was_cr = (ch == '\r');
+            if (ch == '\r') {
+                ch = '\n';
+            }
 
             // If splash screen is active, dismiss it
             if (splash_screen) {
@@ -430,7 +438,7 @@ void serial_terminal_task(void *param)
                 esp_rom_printf("%c", ch);
             } else if (ch == 8 || ch == 127) {
                 esp_rom_printf("\b \b");
-            } else if (ch == '\r' || ch == '\n') {
+            } else if (ch == '\n') {
                 esp_rom_printf("\r\n");
             }
 
@@ -438,7 +446,7 @@ void serial_terminal_task(void *param)
                 ssh_terminal->handle_key_input(ch);
             }
         } else {
-            vTaskDelay(pdMS_TO_TICKS(20));
+            vTaskDelay(pdMS_TO_TICKS(15));
         }
     }
 }

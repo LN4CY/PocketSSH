@@ -93,6 +93,7 @@
     [ "esp:GND.1", "tb_down:2.l", "black", [ "v0" ] ]
   ],
   "serialMonitor": {
-    "display": "terminal"
+    "display": "always",
+    "newline": "crlf"
   }
 }
