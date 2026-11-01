@@ -1,4 +1,4 @@
-name: Wokwi Simulation Tests
+name: PocketSSH CI & Simulation Tests
 
 on:
   push:
@@ -8,8 +8,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  wokwi-test:
+  test:
     runs-on: ubuntu-latest
+    env:
+      WOKWI_CLI_TOKEN: ${{ secrets.WOKWI_CLI_TOKEN }}
 
     steps:
       - name: Checkout Repository
@@ -17,8 +19,13 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Run Pre-Build Verification & Unit Tests
-        run: python3 tests/test_runner.py
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Host Unit & Subsystem Tests
+        run: python tests/test_runner.py
 
       - name: Build Firmware with ESP-IDF
         uses: espressif/esp-idf-ci-action@v1
@@ -28,7 +35,7 @@ jobs:
           path: '.'
 
       - name: Run Wokwi Automated Integration Scenario
-        if: ${{ secrets.WOKWI_CLI_TOKEN != '' }}
+        if: env.WOKWI_CLI_TOKEN != ''
         uses: wokwi/wokwi-ci-action@v1
         with:
           token: ${{ secrets.WOKWI_CLI_TOKEN }}
@@ -38,6 +45,6 @@ jobs:
           fail_text: 'Guru Meditation Error'
 
       - name: Notify Wokwi Token Status
-        if: ${{ secrets.WOKWI_CLI_TOKEN == '' }}
+        if: env.WOKWI_CLI_TOKEN == ''
         run: |
-          echo "::notice ::Wokwi simulation step skipped: WOKWI_CLI_TOKEN is not configured in repository secrets. To enable cloud Wokwi simulation tests in CI, add your token at https://github.com/${{ github.repository }}/settings/secrets/actions"
+          echo "::notice ::Wokwi cloud simulation step skipped: WOKWI_CLI_TOKEN is not configured in repository secrets. To enable automated Wokwi simulation in CI, add your token in GitHub Repository Settings -> Secrets and variables -> Actions."
