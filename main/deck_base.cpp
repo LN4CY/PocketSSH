@@ -73,20 +73,20 @@ void dismiss_splash_screen()
 {
     if (!splash_screen) return;
 
-    if (splash_timer) {
-        lv_timer_delete(splash_timer);
-        splash_timer = NULL;
-    }
-    bool locked = bsp_display_lock(pdMS_TO_TICKS(100));
-    if (splash_screen) {
-        lv_scr_load(ssh_screen);
-        lv_obj_delete(splash_screen);
-        splash_screen = NULL;
-        splash_img = NULL;
-        splash_countdown_label = NULL;
-        splash_bar = NULL;
-    }
+    bool locked = bsp_display_lock(pdMS_TO_TICKS(500));
     if (locked) {
+        if (splash_timer) {
+            lv_timer_delete(splash_timer);
+            splash_timer = NULL;
+        }
+        if (splash_screen) {
+            lv_scr_load(ssh_screen);
+            lv_obj_delete(splash_screen);
+            splash_screen = NULL;
+            splash_img = NULL;
+            splash_countdown_label = NULL;
+            splash_bar = NULL;
+        }
         bsp_display_unlock();
     }
 }
@@ -308,7 +308,9 @@ void trackball_task(void *param)
         
         // Detect falling edge on Up
         if (!up && last_up) {
-            if (ssh_terminal) {
+            if (splash_screen) {
+                dismiss_splash_screen();
+            } else if (ssh_terminal) {
                 if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_up();
                 } else {
@@ -319,7 +321,9 @@ void trackball_task(void *param)
         
         // Detect falling edge on Down
         if (!down && last_down) {
-            if (ssh_terminal) {
+            if (splash_screen) {
+                dismiss_splash_screen();
+            } else if (ssh_terminal) {
                 if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_down();
                 } else {
@@ -330,7 +334,9 @@ void trackball_task(void *param)
 
         // Detect falling edge on Left
         if (!left && last_left) {
-            if (ssh_terminal) {
+            if (splash_screen) {
+                dismiss_splash_screen();
+            } else if (ssh_terminal) {
                 if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_left();
                 } else {
@@ -341,7 +347,9 @@ void trackball_task(void *param)
 
         // Detect falling edge on Right
         if (!right && last_right) {
-            if (ssh_terminal) {
+            if (splash_screen) {
+                dismiss_splash_screen();
+            } else if (ssh_terminal) {
                 if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_right();
                 } else {
@@ -358,13 +366,10 @@ void trackball_task(void *param)
             // Button released - check duration
             uint32_t press_duration = (xTaskGetTickCount() * portTICK_PERIOD_MS) - press_start_time;
             
-            if (ssh_terminal) {
-                if (splash_screen) {
-                    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-                    if (now_ms - splash_start_ms >= 1500) {
-                        dismiss_splash_screen();
-                    }
-                } else if (press_duration >= 400) {
+            if (splash_screen) {
+                dismiss_splash_screen();
+            } else if (ssh_terminal) {
+                if (press_duration >= 400) {
                     // Long press (>400ms):
                     if (ssh_terminal->is_connected()) {
                         ESP_LOGI("TRACKBALL", "Long press in SSH (%lu ms) - sending Ctrl+C", press_duration);
@@ -401,6 +406,9 @@ void trackball_task(void *param)
 
 void serial_terminal_task(void *param)
 {
+    setvbuf(stdin, NULL, _IONBF, 0);
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     static bool last_was_cr = false;
     while (1) {
         int c = fgetc(stdin);
