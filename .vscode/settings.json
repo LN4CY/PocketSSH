@@ -13,5 +13,6 @@
   "files.associations": {
     "*.hpp": "cpp",
     "*.h": "c"
-  }
+  },
+  "idf.currentSetup": "C:\\esp\\v6.1\\esp-idf"
 }
