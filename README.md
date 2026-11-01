@@ -466,13 +466,19 @@ pwsh -File .\tests\run_qemu_test.ps1
 
 #### Running QEMU Interactively
 
-You can also run PocketSSH interactively inside your desktop terminal:
+You can launch PocketSSH interactively inside your desktop terminal using the helper script:
+
+```powershell
+pwsh -File .\run_qemu.ps1
+```
+
+Or run the QEMU binary directly from the project directory (`e:\proj\AiAssited\PocketSSH`):
 
 ```powershell
 & "E:\proj\sdk\.espressif\tools\qemu-xtensa\esp_develop_9.0.0_20240606\qemu\bin\qemu-system-xtensa.exe" `
     -machine esp32s3 `
-    -drive file=build/qemu_flash.bin,if=mtd,format=raw `
-    -drive file=build/qemu_efuse.bin,if=none,format=raw,id=efuse `
+    -drive file=E:\proj\AiAssited\PocketSSH\build\qemu_flash.bin,if=mtd,format=raw `
+    -drive file=E:\proj\AiAssited\PocketSSH\build\qemu_efuse.bin,if=none,format=raw,id=efuse `
     -nographic -serial mon:stdio
 ```
 
