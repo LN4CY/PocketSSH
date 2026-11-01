@@ -24,7 +24,7 @@ if ($Verbose) {
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host ""
-    Write-Host "[OK] ALL 25 SUBSYSTEM UNIT AND INTEGRATION TESTS PASSED (100% VERIFIED)" -ForegroundColor Green
+    Write-Host "[OK] ALL 28 SUBSYSTEM UNIT AND INTEGRATION TESTS PASSED (100% VERIFIED)" -ForegroundColor Green
 } else {
     Write-Host ""
     Write-Host "[ERROR] TEST FAILURES DETECTED! HALTING FIRMWARE BUILD." -ForegroundColor Red

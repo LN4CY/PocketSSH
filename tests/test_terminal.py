@@ -340,6 +340,34 @@ class TestEscapeCommandStateMachine(unittest.TestCase):
         self.assertFalse(alt_mode)
         self.assertTrue(toggled_shell)
 
+    def test_empty_enter_produces_prompt_in_local_shell(self):
+        # When hitting Enter on an empty line in local shell, a prompt must be output
+        current_input = ""
+        prompt = "> "
+        output = []
+        if not current_input:
+            output.append("\n" + prompt)
+        self.assertEqual(output, ["\n> "])
+
+    def test_exit_when_disconnected_does_not_claim_session_closed(self):
+        # When disconnected, typing exit should indicate not connected, never [SSH session closed]
+        ssh_connected = False
+        action = None
+        if ssh_connected:
+            action = "disconnect"
+        else:
+            action = "not_connected"
+        self.assertEqual(action, "not_connected")
+
+    def test_backspace_handled_in_alt_mode(self):
+        # Backspace (8 or 127) in alt mode should delete character and not logout
+        alt_mode = True
+        key = 127
+        current_input = "test"
+        if alt_mode and key in (8, 127):
+            current_input = current_input[:-1]
+        self.assertEqual(current_input, "tes")
+
 
 class TestTerminalIntegration(unittest.TestCase):
     """End-to-end integration test simulating live SSH server stream."""

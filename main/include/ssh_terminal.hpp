@@ -10,6 +10,8 @@
 #include "lvgl.h"
 #include "esp_err.h"
 #include "esp_wifi_types.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -175,6 +177,7 @@ private:
     int ssh_socket;
     LIBSSH2_SESSION *session;
     LIBSSH2_CHANNEL *channel;
+    SemaphoreHandle_t ssh_mutex;
     
     char* hostname;
     int port_number;

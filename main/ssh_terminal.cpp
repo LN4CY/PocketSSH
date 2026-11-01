@@ -84,6 +84,7 @@ SSHTerminal::SSHTerminal()
       ssh_socket(-1),
       session(NULL),
       channel(NULL),
+      ssh_mutex(NULL),
       hostname(NULL),
       port_number(22),
       ssh_rx_paused(false),
@@ -107,6 +108,7 @@ SSHTerminal::SSHTerminal()
     
     s_terminal_instance = this;
     connected_ssid = "";
+    ssh_mutex = xSemaphoreCreateRecursiveMutex();
     load_history_from_nvs();
     load_keys_from_nvs();
 }
@@ -114,6 +116,10 @@ SSHTerminal::SSHTerminal()
 SSHTerminal::~SSHTerminal() 
 {
     disconnect();
+    if (ssh_mutex) {
+        vSemaphoreDelete(ssh_mutex);
+        ssh_mutex = NULL;
+    }
     if (hostname) {
         free(hostname);
     }
@@ -763,6 +769,11 @@ void SSHTerminal::autoconnect_task(void* param)
 ssize_t SSHTerminal::ssh_write_all(const char* data, size_t len)
 {
     if (!channel || !data || len == 0) return -1;
+    if (ssh_mutex) xSemaphoreTakeRecursive(ssh_mutex, portMAX_DELAY);
+    if (!channel) {
+        if (ssh_mutex) xSemaphoreGiveRecursive(ssh_mutex);
+        return -1;
+    }
     size_t total = 0;
     int retries = 0;
     while (total < len && retries < 25) {
@@ -776,6 +787,7 @@ ssize_t SSHTerminal::ssh_write_all(const char* data, size_t len)
             break;
         }
     }
+    if (ssh_mutex) xSemaphoreGiveRecursive(ssh_mutex);
     return total;
 }
 
@@ -1225,6 +1237,35 @@ void SSHTerminal::handle_key_input(char key)
             set_alt_mode(false);
             if (ssh_connected) {
                 toggle_local_shell_mode();
+            } else {
+                append_text("\n[Local Shell Active. Type 'help' for commands]\n> ");
+                scroll_to_bottom();
+            }
+            return;
+        }
+
+        // Backspace in Alt Mode
+        if (key == 8 || key == 127) {
+            if (ssh_connected && channel && !is_local_mode_during_ssh) {
+                if (!ssh_cmd_buffer.empty()) {
+                    ssh_cmd_buffer.pop_back();
+                    if (ssh_cmd_buffer.empty()) {
+                        ssh_at_line_start = true;
+                        set_activity_status("[ONLINE]", 0x50FF50);
+                    } else {
+                        std::string hud_text = "[" + ssh_cmd_buffer + "]";
+                        if (hud_text.length() > 10) hud_text = hud_text.substr(0, 9) + "]";
+                        set_activity_status(hud_text.c_str(), 0xFFFF50);
+                    }
+                    return;
+                }
+                ssh_write_all("\x7F", 1);
+            } else {
+                if (cursor_pos > 0 && !current_input.empty()) {
+                    current_input.erase(cursor_pos - 1, 1);
+                    cursor_pos--;
+                    update_input_display();
+                }
             }
             return;
         }
@@ -1263,13 +1304,6 @@ void SSHTerminal::handle_key_input(char key)
             if (ssh_connected && channel) {
                 ssh_write_all("\x1A", 1);
                 set_activity_status("[^Z SENT]", 0xFFFF50);
-            }
-            return;
-        }
-        if (key == 'd' || key == 'D') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\x04", 1);
-                set_activity_status("[^D SENT]", 0xFFFF50);
             }
             return;
         }
@@ -1434,10 +1468,18 @@ void SSHTerminal::handle_key_input(char key)
 
     if (key == '\n' || key == '\r') {
         scroll_to_bottom();
-        if (!current_input.empty()) {
-            append_text("\n> ");
-            append_text(current_input.c_str());
+        std::string prompt_str = (ssh_connected && is_local_mode_during_ssh) ? "[local]> " : "> ";
+        if (current_input.empty()) {
             append_text("\n");
+            append_text(prompt_str.c_str());
+            scroll_to_bottom();
+            return;
+        }
+
+        append_text("\n");
+        append_text(prompt_str.c_str());
+        append_text(current_input.c_str());
+        append_text("\n");
             
             if (current_input == "scan" || current_input == "wifi scan") {
                 scan_wifi();
@@ -1757,8 +1799,14 @@ void SSHTerminal::handle_key_input(char key)
                     append_text("No active SSH session to resume. Use 'ssh' or 'sshkey' to connect.\n");
                 }
             }
-            else if (current_input == "exit") {
-                disconnect();
+            else if (current_input == "exit" || current_input == "quit") {
+                if (ssh_connected) {
+                    disconnect();
+                } else {
+                    append_text("PocketSSH Local Shell. Not connected to SSH.\n");
+                    append_text("Type 'help' for commands, or 'connect' to join WiFi.\n> ");
+                    scroll_to_bottom();
+                }
             }
             else if (current_input == "clear") {
                 clear_terminal();
@@ -1870,7 +1918,6 @@ void SSHTerminal::handle_key_input(char key)
             current_input.clear();
             cursor_pos = 0;
             history_index = -1;
-        }
     } else if (key == 8 || key == 127) {
         // Backspace - delete character before cursor
         if (cursor_pos > 0 && !current_input.empty()) {
@@ -2611,10 +2658,19 @@ esp_err_t SSHTerminal::ssh_open_channel()
 
 esp_err_t SSHTerminal::disconnect()
 {
+    if (!ssh_connected && !channel && !session && ssh_socket < 0) {
+        ESP_LOGI(TAG, "Already disconnected");
+        set_ssh_ui_mode(false);
+        return ESP_OK;
+    }
+
+    bool had_connection = ssh_connected || (channel != NULL);
     ssh_connected = false;
     is_local_mode_during_ssh = false;
     set_activity_status("", 0x50FF50);
     
+    if (ssh_mutex) xSemaphoreTakeRecursive(ssh_mutex, portMAX_DELAY);
+
     if (channel) {
         libssh2_channel_free(channel);
         channel = NULL;
@@ -2632,6 +2688,8 @@ esp_err_t SSHTerminal::disconnect()
     }
 
     libssh2_exit();
+
+    if (ssh_mutex) xSemaphoreGiveRecursive(ssh_mutex);
     
     ssh_rx_paused = false;
     ssh_rx_is_paused = false;
@@ -2647,7 +2705,10 @@ esp_err_t SSHTerminal::disconnect()
     }
     
     set_ssh_ui_mode(false);
-    append_text("\n[SSH session closed]\n");
+    if (had_connection) {
+        append_text("\n\033[33m[SSH session closed]\033[0m\n> ");
+        scroll_to_bottom();
+    }
     
     ESP_LOGI(TAG, "Disconnected");
     
@@ -2724,7 +2785,13 @@ void SSHTerminal::ssh_receive_task(void* param)
         }
         terminal->ssh_rx_is_paused = false;
 
+        if (terminal->ssh_mutex) xSemaphoreTakeRecursive(terminal->ssh_mutex, portMAX_DELAY);
+        if (!terminal->channel || !terminal->ssh_connected) {
+            if (terminal->ssh_mutex) xSemaphoreGiveRecursive(terminal->ssh_mutex);
+            break;
+        }
         rc = libssh2_channel_read(terminal->channel, buffer, sizeof(buffer) - 1);
+        if (terminal->ssh_mutex) xSemaphoreGiveRecursive(terminal->ssh_mutex);
         
         if (rc > 0) {
             buffer[rc] = '\0';
@@ -2750,7 +2817,14 @@ void SSHTerminal::ssh_receive_task(void* param)
             break;
         }
 
-        if (libssh2_channel_eof(terminal->channel)) {
+        bool is_eof = false;
+        if (terminal->ssh_mutex) xSemaphoreTakeRecursive(terminal->ssh_mutex, portMAX_DELAY);
+        if (terminal->channel) {
+            is_eof = (libssh2_channel_eof(terminal->channel) != 0);
+        }
+        if (terminal->ssh_mutex) xSemaphoreGiveRecursive(terminal->ssh_mutex);
+
+        if (is_eof) {
             ESP_LOGI(TAG, "Channel EOF");
             terminal->flush_display_buffer();
             break;
@@ -5494,6 +5568,7 @@ void SSHTerminal::set_ssh_ui_mode(bool ssh_active)
         // Return to Local Terminal Shell: restore bottom prompt bar
         lv_obj_clear_state(terminal_output, LV_STATE_FOCUSED);
         lv_obj_clear_flag(input_container, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(input_container);
         lv_obj_set_size(terminal_output, lv_pct(100), lv_pct(75));
         lv_obj_align(terminal_output, LV_ALIGN_TOP_MID, 0, 25);
         current_input.clear();
