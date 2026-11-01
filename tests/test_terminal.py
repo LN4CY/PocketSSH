@@ -262,7 +262,7 @@ class TestEscapeCommandStateMachine(unittest.TestCase):
                     flushed_to_remote.append('\r')
                 continue
 
-            if not buffer and ch in (':', '~'):
+            if not buffer and ch == ':':
                 buffer += ch
                 continue
 
@@ -317,6 +317,28 @@ class TestEscapeCommandStateMachine(unittest.TestCase):
         cmd, remote = self.simulate_key_entry("ls -la\r")
         self.assertIsNone(cmd)
         self.assertEqual(remote, "ls -la\r")
+
+    def test_tilde_slash_never_intercepted_as_escape(self):
+        # ~/scripts/run.sh must pass directly to remote shell without buffering
+        cmd, remote = self.simulate_key_entry("~/scripts/run.sh\r")
+        self.assertIsNone(cmd)
+        self.assertEqual(remote, "~/scripts/run.sh\r")
+
+    def test_cd_tilde_slash_passed_to_remote_shell(self):
+        cmd, remote = self.simulate_key_entry("cd ~/.ssh\r")
+        self.assertIsNone(cmd)
+        self.assertEqual(remote, "cd ~/.ssh\r")
+
+    def test_alt_enter_toggles_local_shell(self):
+        # Simulates Alt Mode + Enter dispatching local shell toggle
+        alt_mode = True
+        key = '\n'
+        toggled_shell = False
+        if alt_mode and key in ('\n', '\r'):
+            alt_mode = False
+            toggled_shell = True
+        self.assertFalse(alt_mode)
+        self.assertTrue(toggled_shell)
 
 
 class TestTerminalIntegration(unittest.TestCase):

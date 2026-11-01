@@ -114,6 +114,8 @@ public:
     void send_arrow_right();
     void send_char_or_insert(char c);
     void run_terminal_self_tests();
+    void toggle_local_shell_mode();
+    bool is_local_shell_active() const { return is_local_mode_during_ssh; }
     
 private:
     lv_obj_t* terminal_screen;
@@ -143,6 +145,7 @@ private:
     std::string current_input;
     std::string ssh_cmd_buffer;
     bool ssh_at_line_start;
+    bool is_local_mode_during_ssh;
     void process_escape_command(const std::string& raw_cmd);
     size_t cursor_pos;
     size_t bytes_received;

@@ -68,6 +68,7 @@ SSHTerminal::SSHTerminal()
       is_user_scrolled_back(false),
       ssh_cmd_buffer(""),
       ssh_at_line_start(true),
+      is_local_mode_during_ssh(false),
       cursor_pos(0),
       bytes_received(0),
       history_index(-1),
@@ -1024,7 +1025,7 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
     }, LV_EVENT_CLICKED, this);
 
     lv_obj_t* hud_l1 = lv_label_create(alt_hud_panel);
-    lv_label_set_text(hud_l1, "[ALT ON] Trackball:Arrows | Space:Tab | Tap to exit");
+    lv_label_set_text(hud_l1, "[ALT ON] Enter:Local Shell | Space:Tab | Trackball:Arrows");
     lv_obj_set_style_text_color(hud_l1, lv_color_hex(0xFFCC00), 0);
     lv_obj_set_style_text_font(hud_l1, &lv_font_montserrat_10, 0);
     lv_obj_align(hud_l1, LV_ALIGN_TOP_LEFT, 2, 0);
@@ -1219,6 +1220,15 @@ void SSHTerminal::handle_key_input(char key)
     // ALT MODE ACTIVE KEY DISPATCH
     // ========================================================
     if (alt_mode) {
+        // Alt + Enter: Toggle between Local Shell Mode and Full Interactive SSH Mode
+        if (key == '\n' || key == '\r') {
+            set_alt_mode(false);
+            if (ssh_connected) {
+                toggle_local_shell_mode();
+            }
+            return;
+        }
+
         // Space -> Tab
         if (key == ' ') {
             if (ssh_connected && channel) {
@@ -1322,12 +1332,12 @@ void SSHTerminal::handle_key_input(char key)
     // ========================================================
     // FULL RAW INTERACTIVE SSH MODE (Desktop Experience)
     // ========================================================
-    if (ssh_connected && channel) {
+    if (ssh_connected && channel && !is_local_mode_during_ssh) {
         if (key == 27) {
             if (!ssh_cmd_buffer.empty()) {
                 ssh_cmd_buffer.clear();
-                ssh_at_line_start = false;
-                append_text(" [cancelled]\n");
+                ssh_at_line_start = true;
+                set_activity_status("[ONLINE]", 0x50FF50);
                 return;
             }
             ssh_write_all("\x1B", 1);
@@ -1337,10 +1347,10 @@ void SSHTerminal::handle_key_input(char key)
 
         if (key == '\n' || key == '\r') {
             if (!ssh_cmd_buffer.empty()) {
-                append_text("\n");
                 std::string cmd = ssh_cmd_buffer;
                 ssh_cmd_buffer.clear();
                 ssh_at_line_start = true;
+                set_activity_status("[ONLINE]", 0x50FF50);
                 process_escape_command(cmd);
                 return;
             }
@@ -1353,19 +1363,22 @@ void SSHTerminal::handle_key_input(char key)
         else if (key == 8 || key == 127) {
             if (!ssh_cmd_buffer.empty()) {
                 ssh_cmd_buffer.pop_back();
-                lv_textarea_delete_char(terminal_output);
                 if (ssh_cmd_buffer.empty()) {
                     ssh_at_line_start = true;
+                    set_activity_status("[ONLINE]", 0x50FF50);
+                } else {
+                    std::string hud_text = "[" + ssh_cmd_buffer + "]";
+                    if (hud_text.length() > 10) hud_text = hud_text.substr(0, 9) + "]";
+                    set_activity_status(hud_text.c_str(), 0xFFFF50);
                 }
                 return;
             }
             ssh_write_all("\x7F", 1);
             return;
         }
-        else if (ssh_cmd_buffer.empty() && (key == ':' || key == '~')) {
+        else if (ssh_at_line_start && ssh_cmd_buffer.empty() && key == ':') {
             ssh_cmd_buffer += key;
-            char k_str[2] = { key, '\0' };
-            append_text(k_str);
+            set_activity_status("[:]", 0xFFFF50);
             return;
         }
         else if (!ssh_cmd_buffer.empty()) {
@@ -1390,10 +1403,12 @@ void SSHTerminal::handle_key_input(char key)
                 libssh2_channel_write(channel, ssh_cmd_buffer.c_str(), ssh_cmd_buffer.size());
                 ssh_cmd_buffer.clear();
                 ssh_at_line_start = false;
+                set_activity_status("[ONLINE]", 0x50FF50);
                 return;
             }
-            char k_str[2] = { key, '\0' };
-            append_text(k_str);
+            std::string hud_text = "[" + ssh_cmd_buffer + "]";
+            if (hud_text.length() > 10) hud_text = hud_text.substr(0, 9) + "]";
+            set_activity_status(hud_text.c_str(), 0xFFFF50);
             return;
         }
         else if (key == '\t' || key == 9) {
@@ -1735,6 +1750,13 @@ void SSHTerminal::handle_key_input(char key)
                     append_text("WiFi not connected\n");
                 }
             }
+            else if (current_input == "resume" || current_input == "fg" || (current_input == "ssh" && ssh_connected)) {
+                if (ssh_connected) {
+                    toggle_local_shell_mode();
+                } else {
+                    append_text("No active SSH session to resume. Use 'ssh' or 'sshkey' to connect.\n");
+                }
+            }
             else if (current_input == "exit") {
                 disconnect();
             }
@@ -1830,6 +1852,7 @@ void SSHTerminal::handle_key_input(char key)
                 append_text("  Tab / Alt+Space            - Auto-complete command, SSID or keys\n");
                 append_text("  version                    - Show version & build info\n");
                 append_text("  test                       - Run terminal validation & self-test suite\n");
+                append_text("  resume / fg                - Resume active SSH session (or Alt+Enter)\n");
                 append_text("  help                       - Show this help\n");
             }
             else if (ssh_connected) {
@@ -1878,11 +1901,12 @@ void SSHTerminal::update_input_display()
         cursor_pos = current_input.length();
     }
     
-    std::string full_text = "> " + current_input;
+    std::string prompt_str = (ssh_connected && is_local_mode_during_ssh) ? "[local]> " : "> ";
+    std::string full_text = prompt_str + current_input;
     
     // Insert cursor at correct position
     if (cursor_visible) {
-        size_t display_pos = 2 + cursor_pos; // 2 = length of "> "
+        size_t display_pos = prompt_str.length() + cursor_pos;
         full_text.insert(display_pos, "|");
     }
     
@@ -2588,6 +2612,7 @@ esp_err_t SSHTerminal::ssh_open_channel()
 esp_err_t SSHTerminal::disconnect()
 {
     ssh_connected = false;
+    is_local_mode_during_ssh = false;
     set_activity_status("", 0x50FF50);
     
     if (channel) {
@@ -3717,6 +3742,7 @@ void SSHTerminal::create_side_panel()
     create_key_button("Clear", "CLEAR", 945);
     create_key_button("Get Key", "GETKEY", 980);
     create_key_button("Self Test", "TEST", 1015);
+    create_key_button("Local/SSH", "TOGGLE_SHELL", 1050);
 }
 
 void SSHTerminal::toggle_side_panel()
@@ -3794,6 +3820,12 @@ void SSHTerminal::send_special_key(const char* sequence)
     if (strcmp(sequence, "TEST") == 0) {
         toggle_side_panel();
         run_terminal_self_tests();
+        return;
+    }
+
+    if (strcmp(sequence, "TOGGLE_SHELL") == 0) {
+        toggle_side_panel();
+        toggle_local_shell_mode();
         return;
     }
     
@@ -4305,6 +4337,25 @@ void SSHTerminal::set_alt_mode(bool enable)
         bsp_display_unlock();
     }
     ESP_LOGI(TAG, "Alt Mode: %s", alt_mode ? "ON" : "OFF");
+}
+
+void SSHTerminal::toggle_local_shell_mode()
+{
+    if (!ssh_connected) return;
+
+    is_local_mode_during_ssh = !is_local_mode_during_ssh;
+    if (is_local_mode_during_ssh) {
+        set_ssh_ui_mode(false);
+        set_activity_status("[LOCAL]", 0xFFFF50);
+        append_text("\n\033[33m--- [PocketSSH Local Shell Active] ---\033[0m\n");
+        append_text("Type local commands ('getkey', 'keys', 'test', 'status', 'help').\n");
+        append_text("Type '\033[1;32mresume\033[0m' or press \033[1;36mAlt+Enter\033[0m to return to SSH.\n\n");
+    } else {
+        set_ssh_ui_mode(true);
+        set_activity_status("[ONLINE]", 0x50FF50);
+        append_text("\n\033[32m--- [Resumed Interactive SSH Session] ---\033[0m\n");
+    }
+    scroll_to_bottom();
 }
 
 void SSHTerminal::send_arrow_up()
@@ -5428,6 +5479,7 @@ void SSHTerminal::set_ssh_ui_mode(bool ssh_active)
 
     if (ssh_active) {
         // Full Interactive Desktop SSH Mode: hide bottom local bar and expand terminal
+        is_local_mode_during_ssh = false;
         lv_obj_add_flag(input_container, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_size(terminal_output, lv_pct(100), lv_pct(88));
         lv_obj_align(terminal_output, LV_ALIGN_TOP_MID, 0, 25);
