@@ -18,742 +18,576 @@
 ╚══════════════════════════════════════════════════════════════════════╝
 ```
 <div align="center">
-  <img src="misc/pipboy.gif" alt="PocketSSH 1.2.0">
-  <p><em>PocketSSH 1.2.0</em></p>
+  <img src="misc/pipboy.gif" alt="PocketSSH Pip-Boy CRT Experience">
+  <p><em>PocketSSH — Portable Handheld SSH Terminal for ESP32-S3 T-Deck Plus</em></p>
   <p><a href="https://youtu.be/iMoiEmd5Mq8">📺 Watch Demo Video</a></p>
 </div>
 
-
 # PocketSSH
 
-A portable SSH terminal client for the ESP32-S3 T-Deck Plus, featuring a hardware keyboard, trackball navigation, and touch gesture controls. Connect to remote servers, execute commands, and navigate your terminal with ease on this compact handheld device.
+PocketSSH is a standalone, ultra-portable SSH2 client and terminal environment engineered specifically for the **LilyGO T-Deck / T-Deck Plus** (ESP32-S3). Featuring a retro Pip-Boy amber/green CRT aesthetic, PocketSSH provides a full-fledged interactive terminal experience with physical keyboard entry, dual-mode trackball navigation, touch gesture controls, MicroSD-backed public key management, remote key fetching, and a 25-test host Verification & Validation (V&V) suite.
 
 ![PocketSSH Screenshot](misc/screenshot_01.jpeg)
 
-## Version History
+---
 
-### v1.3.0 (October 31, 2026)
-- **Added**: MicroSD Card Permanent Mount & Shared SPI Bus Architecture
-  - Resolved hardware bus sharing between ST7789 display and MicroSD card on `SPI2_HOST` (MISO=GPIO 38, SD_CS=GPIO 39, LCD_CS=GPIO 12).
-  - MicroSD card remains permanently mounted at `/sdcard` during full runtime without display conflicts.
-  - Dual-layer configuration persistence: `/sdcard/wifi.cfg` and `/sdcard/wificonfig.json` with seamless NVS fallback.
-- **Added**: Real-Time SSH Activity Indicator & Stream Batching
-  - Continuous status indication: displays `[WAIT...]` on command submission, live rotating spinner `[ / ]` `[ - ]` `[ \ ]` `[ | ]` during incoming byte streams, and `[ONLINE]` when idle.
-  - High-speed output chunk batching: flushes text in 256-byte chunks, reducing display lock contention by 1000x and completely eliminating device hangs during large command outputs.
-- **Added**: Dynamic Alt Mode, Trackball Arrow Navigation & Missing Symbols
-  - **Alt Mode Toggle**: Toggle on/off by clicking the hardware trackball (short click) or tapping the top-bar **`[ALT]`** button.
-  - **Dual-Behavior Trackball**:
-    - **Normal Mode**: Trackball rolls scroll terminal history up/down.
-    - **Alt Mode**: Trackball rolls send ANSI arrow keys (`Up`, `Down`, `Left`, `Right` / `\033[A`, `\033[B`, `\033[D`, `\033[C`) to navigate command history and remote cursor in vim, nano, and bash.
-  - **On-Screen Alt HUD Hint**: A sleek floating HUD banner appears whenever Alt Mode is active, showing all available key shortcuts directly on screen.
-  - **Tab Key**: Press **`Space`** in Alt Mode (or `Alt + Space`) to send `Tab` (`\t`) for remote bash/zsh auto-completion.
-  - **Missing Symbols (Alt Mode)**:
-    - **`t`** / **`T`** $\rightarrow$ **`~`** (Tilde - essential for `~/`)
-    - **`p`** / **`P`** $\rightarrow$ **`|`** (Pipe - essential for shell pipelines)
-    - **`b`** / **`B`** $\rightarrow$ **`\`** (Backslash)
-    - **`e`** / **`E`** $\rightarrow$ **`=`** (Equals)
-    - **`u`** / **`U`** $\rightarrow$ **`[`** (Left square bracket)
-    - **`i`** / **`I`** $\rightarrow$ **`]`** (Right square bracket)
-    - **`o`** / **`O`** $\rightarrow$ **`{`** (Left curly brace)
-    - **`j`** / **`J`** $\rightarrow$ **`}`** (Right curly brace)
-    - **`k`** / **`K`** $\rightarrow$ **`<`** (Less than)
-    - **`m`** / **`M`** $\rightarrow$ **`>`** (Greater than)
-    - **`q`** / **`Q`** $\rightarrow$ **``` ` ```** (Backtick)
-    - **`s`** / **`S`** $\rightarrow$ **`$`** (Dollar sign)
-    - **`g`** / **`G`** $\rightarrow$ **`^`** (Caret)
-    - **`n`** / **`N`** $\rightarrow$ **`&`** (Ampersand)
-  - **Control Keys (Alt Mode)**:
-    - **`c`** $\rightarrow$ `Ctrl+C` (SIGINT)
-    - **`z`** $\rightarrow$ `Ctrl+Z` (SIGTSTP)
-    - **`d`** $\rightarrow$ `Ctrl+D` (EOF / Logout)
-    - **`l`** $\rightarrow$ `Ctrl+L` (Clear screen)
-    - **`a`** $\rightarrow$ `Ctrl+A` (Home / Beginning of line)
-    - **`r`** $\rightarrow$ `Ctrl+R` (Reverse history search)
-    - **`x`** $\rightarrow$ `Ctrl+X` (Exit nano)
-    - **`w`** $\rightarrow$ `Ctrl+W` (Delete word)
-  - Physical keyboard **`Alt + C`**: Always triggers `Ctrl+C` (`\x03` / SIGINT) immediately.
-  - Dedicated on-screen **`[ALT]`**, **`[ESC]`**, **`[^C]`**, and **`[KEY]`** touch buttons in the top bar.
-  - Hardware trackball long-press (>400 ms) sends `Ctrl+C` (`\x03`) immediately in SSH mode.
-- **Added**: Interactive Desktop SSH Experience
-  - Full-screen terminal experience: Automatically collapses local input bar upon connection and expands output to 53x24 character grid.
-  - Blinking green cursor with hardware trackball non-destructive left/right positioning.
-  - Line-erasure support (`\r\033[K` and lone `\r`) resolving command history line-appending on Up/Down arrows.
-  - Standard Unix backspace handling (`VERASE=127` and `\b \b` destructive erasure).
-  - Remote tab auto-completion with candidate list display.
-- **Added**: Interactive Remote SSH Key Retrieval
-  - Retrieve private keys directly from connected SSH servers via `:getkey <remote_path> [key_name]`.
-  - Automatically verifies and persists keys to both `/sdcard/ssh_keys/<name>.pem` and NVS.
-  - Dedicated `Get Key` button in the touch slide-out Keys panel.
-- **Added**: Full ANSI SGR 256-Color & TrueColor Engine
-  - Full support for 16 standard/bright ANSI colors, 256-color palette (xterm color cube & grayscale ramp), and 24-bit TrueColor (`\033[38;2;r;g;bm`).
-  - Literal `#` escaping preventing syntax conflicts with shell prompts and comments.
-- **Added**: Smart Emoji Log Engine & Multi-Byte UTF-8 Stream Parser
-  - Multi-byte UTF-8 stream decoding for 1-4 byte sequences across network packet boundaries.
-  - Automated translation of 65+ common developer, DevOps, Git, and CI/CD emojis (`✅`, `❌`, `⚠️`, `ℹ️`, `🚀`, `🔥`, `📦`, `🐛`, `✨`, `🎉`, etc.) into compact, color-coded badges.
-  - Clean normalization of arrows (`->`), bullets (`*`), quotes, and box-drawing characters.
-  - Graceful fallback for unmapped emojis (`[?]` badge) eliminating mojibake and character corruption.
-- **Added**: Interactive 2.4 GHz WiFi Network Scanner (`scan` / `wifi scan`)
-  - Scans all 2.4 GHz channels and lists visible networks sorted by signal strength (RSSI)
-  - Displays SSID, RSSI (dBm), Channel, and Authentication mode (Open, WEP, WPA, WPA2, WPA3, WPA2/WPA3)
-  - Automatically deduplicates multiple BSSIDs for the same SSID (mesh/repeater networks)
-  - Connect easily by scan index number: `connect <#> [password]` (e.g. `connect 1 mypass`)
-- **Added**: WiFi Persistence & Auto-Connect on Boot
-  - Automatically saves successfully connected WiFi credentials to NVS storage
-  - Non-blocking background auto-connect at startup allows immediate device usage
-  - Quick reconnect using saved credentials by typing `connect` without arguments
-  - Management commands: `status` (shows IP, subnet, gateway, DNS, RSSI, MAC), `saved`, `forget`, `autoconnect <on|off>`
-- **Fixed**: WiFi connection failures on modern routers & security types
-  - Fixed WPA3 Personal / SAE authentication by enabling Hash-to-Element (H2E) and Hunting-and-Pecking (`WPA3_SAE_PWE_BOTH`)
-  - Fixed authmode threshold rejection of Open, WEP, and WPA networks (`WIFI_AUTH_OPEN`)
-  - Switched to all-channel scanning with strongest-signal sorting (`WIFI_ALL_CHANNEL_SCAN`), preventing connection drops on mesh & dual-band setups
-  - Enabled channels 1-13 worldwide regulatory domain support
-  - Disabled WiFi modem power save (`WIFI_PS_NONE`) to eliminate connection drops and SSH latency
-- **Added**: Human-readable disconnect reason codes
-  - Pinpoints the exact cause of connection failures (e.g. `[201] AP not found - 2.4 GHz only`, `[202] Authentication failed`, `[15] Handshake timeout`)
-- **Added**: Terminal Scrollback & Backlog Navigation
-  - Full hardware trackball scrolling: Roll Up to scroll back into command history and server logs; Roll Down to scroll forward
-  - Instant return to bottom: Clicking the trackball or tapping the top `[^ SCROLL]` indicator immediately snaps back to live prompt
-  - Non-disruptive backlog reading: Background text arrivals preserve the user's scroll position while reading
-  - 4-way trackball navigation: Trackball Left/Right cycles command history (when prompt is empty), moves the cursor (when typing), or controls remote shell cursor in SSH
-  - Touch drag scrolling: Swipe vertically on the terminal output with smooth momentum and elastic boundary feedback
-  - Visible green scrollbar: Automatically indicates current position and scroll depth
-  - Expanded 16 KB scrollback capacity with smart FIFO circular trimming (no more sudden `...[cleared]` wipes)
-  - Slide-out keys panel additions: Dedicated touch buttons for `PgUp`, `PgDn`, `Top`, and `Bottom`
-  - Terminal commands for scrolling: `pgup`, `pgdn`, `top`, `bottom`, and `scroll` (cheat-sheet)
-- **Fixed**: UI and keyboard freezing during WiFi operations
-  - Resolved display lock starvation in keypad and trackball tasks during connection timeouts
+## Table of Contents
 
-### v1.2.0 (Faburary 1, 2026)
-- **Added**: SSH public key authentication support
-  - SD card SSH key management - automatically loads all `.pem` files from `/sdcard/ssh_keys/` on boot
-  - Keys stored in memory for use with `sshkey` command
-  - Terminal displays list of loaded keys at startup
-  - Case-insensitive file extension matching (`.pem`, `.PEM`, etc.)
-  - Supports multiple keys for different servers
-  - SPI mode SD card access (compatible with T-Deck Plus hardware)
-  - New syntax: `sshkey <HOST> <PORT> <USER> <KEYFILE>` (e.g., `sshkey 192.168.1.100 22 pi rpi_key.pem`)
-  - Uses `libssh2_userauth_publickey_frommemory()` for in-memory key authentication
-  - Supports PEM format RSA keys (generated with `ssh-keygen -m PEM`)
-  - More secure alternative to password authentication
-  - Displays available keys on error
-- **Added**: Quote-aware argument parsing for WiFi credentials
-  - Supports SSIDs and passwords with spaces using double quotes
-  - Example: `connect "My WiFi Network" "my password"`
-  - Works with mixed quoted/unquoted arguments
-  - Backwards compatible with space-free credentials
-- **Improved**: SSH authentication flexibility with two methods (password and public key)
-- **Improved**: Enhanced logging for SD card operations (INFO level)
-- **Fixed**: WiFi connection failures with networks containing spaces in SSID
+- [Key Features](#key-features)
+  - [1. Interactive Desktop SSH Terminal](#1-interactive-desktop-ssh-terminal)
+  - [2. Dual-Mode Shell: Local Shell vs. Remote Interactive SSH](#2-dual-mode-shell-local-shell-vs-remote-interactive-ssh)
+  - [3. Dynamic Alt Mode & Trackball Navigation](#3-dynamic-alt-mode--trackball-navigation)
+  - [4. Missing Symbols & Control Key Shortcuts](#4-missing-symbols--control-key-shortcuts)
+  - [5. SSH Key Authentication & Remote Key Fetching](#5-ssh-key-authentication--remote-key-fetching)
+  - [6. Full ANSI 256-Color & TrueColor Rendering](#6-full-ansi-256-color--truecolor-rendering)
+  - [7. Smart Emoji Engine & UTF-8 Stream Parser](#7-smart-emoji-engine--utf-8-stream-parser)
+  - [8. Robust 2.4 GHz WiFi Subsystem & Persistence](#8-robust-24-ghz-wifi-subsystem--persistence)
+  - [9. Deep Terminal Scrollback & Backlog Navigation](#9-deep-terminal-scrollback--backlog-navigation)
+  - [10. Slide-Out Quick Keys Touch Panel](#10-slide-out-quick-keys-touch-panel)
+  - [11. Pre-Build Verification & Validation (V&V) Suite](#11-pre-build-verification--validation-vv-suite)
+- [Hardware Requirements & Pinout](#hardware-requirements--pinout)
+- [Quick Start Guide](#quick-start-guide)
+  - [1. WiFi Connection](#1-wifi-connection)
+  - [2. SSH Connection](#2-ssh-connection)
+  - [3. Toggling the Local Shell](#3-toggling-the-local-shell)
+- [Command Reference](#command-reference)
+  - [Local Shell Commands](#local-shell-commands)
+  - [SSH Escape Commands](#ssh-escape-commands)
+- [Keyboard & Trackball Cheat Sheet](#keyboard--trackball-cheat-sheet)
+  - [Trackball Actions](#trackball-actions)
+  - [Alt Mode Missing Symbols](#alt-mode-missing-symbols)
+  - [Alt Mode Control Keys](#alt-mode-control-keys)
+- [SSH Key Management Guide](#ssh-key-management-guide)
+  - [PEM Format Requirement](#pem-format-requirement)
+  - [Generating & Converting Keys](#generating--converting-keys)
+  - [Remote Key Fetching (`getkey` / `:getkey`)](#remote-key-fetching-getkey--getkey)
+  - [MicroSD Directory Structure](#microsd-directory-structure)
+- [Verification & Validation (V&V) Guide](#verification--validation-vv-guide)
+  - [Host Pre-Build Tests](#host-pre-build-tests)
+  - [On-Device Self-Tests](#on-device-self-tests)
+- [Architecture & Technical Details](#architecture--technical-details)
+  - [Shared SPI Bus Architecture](#shared-spi-bus-architecture)
+  - [FreeRTOS Tasks](#freertos-tasks)
+  - [Display Performance & Batching](#display-performance--batching)
+- [Building & Flashing](#building--flashing)
+  - [Pre-Built Merged Binary (Offset 0x0)](#pre-built-merged-binary-offset-0x0)
+  - [Building from Source](#building-from-source)
+- [Version History](#version-history)
+- [Troubleshooting](#troubleshooting)
+- [License & Credits](#license--credits)
 
-### v1.1.0 (January 14, 2026)
-- **Fixed**: Boot loop issue on quick power cycles caused by GPIO4 (strapping pin) ADC initialization
-  - Added 100ms delay before ADC initialization to allow GPIO4 to settle after boot
-  - Prevents residual voltage from interfering with boot strapping sequence
-  - Device now boots reliably regardless of power cycle timing
-- **Added**: Touch-to-position cursor functionality
-  - Tap anywhere on input text to move cursor to that position
-  - Improves text editing experience with precise cursor control
-- **Improved**: System stability on rapid power on/off cycles
-
-### v1.0.0 (Initial Release)
-- Full SSH2 terminal with PTY support
-- Hardware keyboard and trackball navigation
-- Touch gesture controls
-- Battery voltage monitoring
-- Command history with NVS storage
+---
 
 ## Key Features
 
-### SSH Terminal
-- Full SSH2 protocol support with password and public key authentication
-- PTY terminal emulation (vt100) for proper shell interaction
-- Real-time command execution and output display
-- Handles large data transfers without freezing
+### 1. Interactive Desktop SSH Terminal
+- **Full-Screen 53x24 Grid**: When an SSH session opens, the local input bar collapses automatically, expanding the terminal viewport to 53 columns by 24 rows of text.
+- **Blinking Green Cursor**: True visual cursor with non-destructive horizontal positioning and auto-scroll to prompt on connect (no blank prompt waiting for Enter).
+- **Line Discipline & Word Wrapping**: Distinct carriage return (`\r`) and linefeed (`\n`) handlers ensure commands longer than a single line wrap smoothly to the next row without overwriting or disappearing from previous lines.
+- **Destructive Backspace Clamping**: Implements Unix `VERASE=127` and `\b \b` erasure while preventing destructive backspacing past the start of the remote prompt.
+- **Pure Tilde (`~/`) Passthrough**: Tilde (`~`) is completely deconflicted and passes straight to the remote shell with zero latency—no escape buffering, no delay, and no double-echoing when typing `cd ~/`, `cat ~/.ssh/id_rsa`, or `~/script.sh`.
+- **High-Speed Stream Batching**: Terminal output streams are flushed in 256-byte chunks, reducing LVGL display lock contention by 1000x and eliminating hangs during large directory listings or file dumps.
+- **Real-Time Activity HUD**: Status pill in the top-right displays `[WAIT...]` on command transmission, an animated rotating spinner `[ / ]` `[ - ]` `[ \ ]` `[ | ]` during incoming byte streams, and `[ONLINE]` when idle.
 
-### Hardware Controls
-- **Physical Keyboard**: Full typing capability via C3 keyboard module
-- **Trackball Navigation**: 
-  - Up/Down: Navigate through command history
-  - Click: Select/execute (when applicable)
-- **Touch Screen Gestures**:
-  - Swipe right-to-left: Show special keys panel
-  - Swipe left-to-right: Hide special keys panel
+### 2. Dual-Mode Shell: Local Shell vs. Remote Interactive SSH
+- **Alt + Enter Toggle**: Seamlessly toggle between **Full Interactive SSH Mode** and **PocketSSH Local Shell Mode** (`[local]> `) at any time without disconnecting your active SSH session.
+- **Protected Local Execution**: In local mode, type commands like `getkey`, `keys`, `test`, `status`, or `help` with full local cursor navigation and history editing; nothing leaks to the remote server.
+- **Seamless Resume**: Return to your active SSH session instantly by pressing **Alt + Enter** again or typing **`resume`**, **`fg`**, or **`ssh`**.
+- **Touch Button**: A dedicated **`Local/SSH`** toggle button is also available in the slide-out touch Keys panel.
 
-### Special Keys Panel
-Quick access to commonly used control sequences:
-- **Ctrl+C**: Interrupt running process
-- **Ctrl+Z**: Suspend process
-- **Ctrl+D**: EOF signal / logout
-- **Ctrl+L**: Clear screen
-- **Tab**: Command completion
-- **Esc**: Escape key
-- **Exit SSH**: Close SSH session
-- **Clear**: Clear terminal display
+### 3. Dynamic Alt Mode & Trackball Navigation
+- **Alt Mode Toggle**: Click the hardware trackball (short press) or tap the on-screen **`[ALT]`** touch pill to toggle Alt Mode on and off.
+- **Dynamic On-Screen Alt HUD**: When Alt Mode is active, a floating yellow HUD banner appears across the top:
+  ```text
+  [ALT ON] Enter:Local Shell | Space:Tab | Trackball:Arrows
+  ```
+- **Dual-Behavior Trackball**:
+  - **Normal Mode (Scroll)**: Rolling the trackball Up/Down scrolls backward and forward through terminal scrollback history. Clicking while scrolled immediately snaps back to the live prompt.
+  - **Alt Mode (Arrow Keys)**: Rolling the trackball Up/Down/Left/Right transmits ANSI arrow sequences (`\033[A`, `\033[B`, `\033[D`, `\033[C`) to navigate command history and control cursors in `vim`, `nano`, `less`, and shell prompts.
+  - **Long-Press SIGINT**: Holding the trackball down for >400 ms sends `Ctrl+C` (`\x03`) immediately in SSH mode to abort runaway processes.
 
-### Display Features
-- 320x240 color LCD with LVGL graphics
-- Real-time byte counter for data transfer monitoring
-- Battery voltage indicator
-- Connection status icons (WiFi, SSH)
-- Non-blocking display updates prioritize rendering over input
+### 4. Missing Symbols & Control Key Shortcuts
+The LilyGO T-Deck hardware keyboard lacks several keys required for standard Unix shell interaction. PocketSSH maps all missing characters and control signals into intuitive single-key chords via Alt Mode:
 
-## Hardware Requirements
+- **Missing Characters**: `~`, `|`, `\`, `=`, `[`, `]`, `{`, `}`, `<`, `>`, `` ` ``, `$`, `^`, `&`, `%`, `/`.
+- **Tab Auto-Completion**: Press **`Space`** while in Alt Mode (or `Alt + Space`) to send `Tab` (`\t`) for remote bash/zsh file and command completion.
+- **Control Keys**: Instant chords for `Ctrl+C`, `Ctrl+Z`, `Ctrl+D`, `Ctrl+L`, `Ctrl+A`, `Ctrl+R`, `Ctrl+X`, and `Ctrl+W`.
+- **Dedicated Touch Buttons**: Top-bar quick pills for **`[ALT]`**, **`[ESC]`**, **`[^C]`**, and **`[KEY]`**.
 
-- **ESP32-S3 T-Deck Plus**
-  - ST7789 LCD Display (320x240)
-  - GT911 Touch Controller
-  - C3 Keyboard Module
-  - Trackball (GPIO 1,2,3,15)
-  - Battery monitoring (GPIO 4)
+### 5. SSH Key Authentication & Remote Key Fetching
+- **MicroSD Key Management**: Automatically loads all `.pem` RSA keys from `/sdcard/ssh_keys/` on boot into memory for fast public-key authentication (`sshkey`).
+- **Interactive Remote Key Fetcher (`getkey` / `:getkey`)**:
+  - Fetch private keys directly from connected SSH hosts into `/sdcard/ssh_keys/<name>.pem` and NVS flash storage.
+  - **Interactive File Picker Dialog**: Running `getkey` without arguments opens a touch modal listing all `.pem` files discovered in the remote `~/.ssh/` directory.
+  - **Automatic PEM Format Validation**: Enforces PKCS#1 PEM headers (`-----BEGIN RSA PRIVATE KEY-----`) and displays helpful diagnostic warnings if an OpenSSH format key is detected.
+  - **Key Name Resolution**: Automatically resolves key names with or without the `.pem` extension (e.g., `id_rsa` resolves to `id_rsa.pem`).
 
-## Quick Start
+### 6. Full ANSI 256-Color & TrueColor Rendering
+- **16 Standard & Bright Colors**: Fully maps ANSI codes `30m-37m`, `40m-47m`, `90m-97m`, and `100m-107m`.
+- **256-Color Palette**: Implements the full 6x6x6 xterm color cube (`\033[38;5;16m` to `231m`) and 24-step grayscale ramp (`232m` to `255m`).
+- **24-Bit TrueColor**: Renders arbitrary RGB colors (`\033[38;2;r;g;bm` and `\033[48;2;r;g;bm`).
+- **Syntax Isolation**: Escapes literal `#` characters in output streams to prevent interference with shell prompts, comments, or LVGL markup.
 
-### Prerequisites
-- ESP-IDF v5.5.1
-- ESP32-S3 T-Deck/T-Deck Plus
+### 7. Smart Emoji Engine & UTF-8 Stream Parser
+- **Network Packet Boundary Resilience**: Multi-byte UTF-8 stream decoder handles 1 to 4 byte UTF-8 sequences spanning fragmented TCP packets.
+- **Automated Developer Emoji Translation**: Maps 65+ common Git, CI/CD, and DevOps emojis (`✅`, `❌`, `⚠️`, `ℹ️`, `🚀`, `🔥`, `📦`, `🐛`, `✨`, `🎉`, etc.) into compact, color-coded text badges.
+- **Mojibake Elimination**: Gracefully normalizes unicode punctuation and renders unknown emojis as an unobtrusive `[?]` badge instead of breaking layout.
 
-### First-Time Setup
+### 8. Robust 2.4 GHz WiFi Subsystem & Persistence
+- **Interactive Network Scanner (`scan`)**: Scans all 2.4 GHz channels and lists visible networks sorted by RSSI signal strength with security types (Open, WEP, WPA, WPA2, WPA3, WPA2/WPA3).
+- **Index-Based Connection**: Connect quickly by scan number: `connect 1 <password>`.
+- **WPA3 Personal / SAE Support**: Enabled Hash-to-Element (H2E) and Hunting-and-Pecking (`WPA3_SAE_PWE_BOTH`).
+- **Low-Latency Mode**: Modem power saving disabled (`WIFI_PS_NONE`) to ensure zero latency and prevent SSH connection drops.
+- **Dual-Layer Credential Persistence**: Automatically saves credentials to ESP32 NVS flash and `/sdcard/wifi.cfg` / `/sdcard/wificonfig.json` with background auto-connect at boot.
+- **Human-Readable Error Codes**: Reports specific connection failure reasons (e.g. `[201] AP not found`, `[202] Authentication failed`, `[15] Handshake timeout`).
 
-1. **WiFi Management & Connection**:
-   - **Scan for nearby 2.4 GHz networks**:
-     ```
-     scan
-     ```
-   - **Connect by scan index**:
-     ```
-     connect 1 MyPassword123
-     ```
-   - **Connect by SSID**:
-     ```
-     connect MyNetwork MyPassword123
-     ```
-   - **Connect with spaces** (use double quotes):
-     ```
-     connect "My WiFi Network" "my password 123"
-     ```
-   - **Connect to Open networks** (no password required):
-     ```
-     connect GuestWiFi
-     ```
-   - **Reconnect to saved network**:
-     ```
-     connect
-     ```
-   - **Check status & IP**:
-     ```
-     status
-     ```
+### 9. Deep Terminal Scrollback & Backlog Navigation
+- **16 KB Circular FIFO Buffer**: Large scrollback memory prevents sudden terminal wipes when running commands with large output.
+- **Trackball & Touch Gestures**: Scroll line-by-line using the trackball or drag vertically on the screen with smooth momentum.
+- **Visual Scrollbar**: Glowing green scroll indicator shows current position and scroll depth.
+- **Instant Snap-to-Bottom**: Clicking the trackball or tapping the top `[^ SCROLL]` indicator immediately snaps back to the active prompt.
 
-2. **Connect to SSH Server**:
-   
-   **With Password**:
-   ```
-   ssh <HOST> <PORT> <USER> <PASSWORD>
-   ```
-   Example: `ssh 192.168.1.100 22 pi raspberry`
-   
-   **With Public Key**:
-   ```
-   sshkey <HOST> <PORT> <USER> <KEYFILE>
-   ```
-   Example: `sshkey 192.168.1.100 22 pi rpi_key.pem`
+### 10. Slide-Out Quick Keys Touch Panel
+- Swipe left-to-right (or tap the **`[KEY]`** pill) to open a slide-out panel with hardware shortcuts:
+  - **Control Keys**: `Ctrl+C`, `Ctrl+Z`, `Ctrl+D`, `Ctrl+L`, `Tab`, `Esc`
+  - **Scrollback Shortcuts**: `PgUp`, `PgDn`, `Top`, `Bottom`, `Clear`
+  - **Session Management**: `Exit SSH`, `Local/SSH`, `Get Key`, `Self Test`
 
-3. **Use Interactive Shell**:
-   Once connected, any command you type is sent to the remote server:
-   ```
-   ls -la
-   cd /home
-   top
-   vim myfile.txt
-   ```
+### 11. Pre-Build Verification & Validation (V&V) Suite
+- **25 Pre-Build Automated Tests**: Complete host test suite ([tests/test_terminal.py](tests/test_terminal.py) and [tests/run_tests.ps1](tests/run_tests.ps1)) runs before every build.
+- **Zero-Tolerance Build Gate**: [build_firmware.ps1](build_firmware.ps1) immediately halts compilation if any unit or integration test fails.
+- **On-Device Self-Tests**: Run `test` (or `selftest`) at any time to verify ANSI rendering, cursor clamping, and line disciplines on the physical display.
 
-4. **Disconnect**:
-   - Type `disconnect` command, or
-   - Use Disconnect button in special keys panel
+---
 
-### Available Local Commands
+## Hardware Requirements & Pinout
 
-These commands are executed locally on the device (not sent to SSH):
-- `help` - Display available commands and usage
-- `clear` - Clear the terminal display
-- `disconnect` - Close WiFi connection
-- `exit` - Close SSH connection
-- `connect <SSID> <PASS>` - Connect to WiFi network (use quotes for spaces: `connect "My WiFi" password`)
-- `ssh <HOST> <PORT> <USER> <PASS>` - Establish SSH connection (password auth)
-- `sshkey <HOST> <PORT> <USER> <KEYFILE>` - Establish SSH connection (public key auth from SD card)
-- `keys` - List all loaded SSH keys currently available in memory/SD card/NVS
+PocketSSH is optimized for the **LilyGO T-Deck / T-Deck Plus**:
 
-## SSH Key Setup Guide
+| Component | Interface / Pins | Details |
+| :--- | :--- | :--- |
+| **Microcontroller** | ESP32-S3 | 16 MB Flash, 8 MB PSRAM |
+| **Display** | SPI (ST7789) | 320×240 IPS Color LCD, CS=GPIO 12, Shared `SPI2_HOST` |
+| **MicroSD Card** | SPI | CS=GPIO 39, MISO=GPIO 38, Shared `SPI2_HOST` |
+| **Touch Controller** | I2C (GT911) | Capacitive touch with gesture support |
+| **Keyboard** | I2C (C3 Module) | Address `0x55`, full QWERTY layout |
+| **Trackball** | GPIO Interrupts | Up=GPIO 1, Left=GPIO 2, Down=GPIO 3, Right=GPIO 15 |
+| **Battery Monitor** | ADC1 Channel 3 | GPIO 4 with voltage divider |
 
-PocketSSH supports SSH public key authentication using keys stored on SD card, eliminating the need to type long private keys on the hardware keyboard.
+---
 
-### Quick Start
+## Quick Start Guide
 
-**1. Generate SSH Key Pair**
+### 1. WiFi Connection
 
-On your computer, generate a PEM format RSA key:
-
-```bash
-ssh-keygen -t rsa -b 4096 -m PEM -f rpi_key -C "" -N ""
+Scan for available 2.4 GHz wireless networks:
+```text
+scan
+```
+Connect using the network's scan index number:
+```text
+connect 1 MyPassword123
+```
+Or connect directly by SSID (use double quotes if the SSID contains spaces):
+```text
+connect "Office WiFi" "SuperSecret123"
+```
+Check connection details and IP address:
+```text
+status
 ```
 
-This creates two files:
-- `rpi_key` - Private key (goes on SD card)
-- `rpi_key.pub` - Public key (goes on server)
+### 2. SSH Connection
 
-**2. Install Public Key on Server**
-
-Copy the public key to your server's authorized_keys:
-
-```bash
-cat rpi_key.pub | ssh pi@raspberrypi.local 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'
+**Password Authentication**:
+```text
+ssh <HOST> <PORT> <USER> <PASSWORD>
 ```
+*Example:* `ssh 192.168.1.100 22 pi raspberry`
 
-**3. Copy Private Key to SD Card**
-
-Create the directory structure on your SD card and copy the private key:
-
-```bash
-# Insert SD card and mount it (path may vary)
-mkdir -p /Volumes/SDCARD/ssh_keys
-cp rpi_key /Volumes/SDCARD/ssh_keys/rpi_key.pem
+**Public Key Authentication**:
+```text
+sshkey <HOST> <PORT> <USER> <KEYFILE>
 ```
+*Example:* `sshkey 192.168.1.100 22 pi id_rsa.pem`  
+*(Or simplified syntax:* `sshkey pi@192.168.1.100 id_rsa.pem`*)*
 
-**Important**: The directory must be named exactly `ssh_keys` (lowercase) at the root of your SD card.
+### 3. Toggling the Local Shell
 
-**4. Use on PocketSSH**
+Once connected to an SSH server:
+1. Press **Alt** (yellow HUD appears: `[ALT ON] Enter:Local Shell | Space:Tab | Trackball:Arrows`).
+2. Press **Enter**.
+3. The prompt switches to `[local]> ` without terminating your SSH session.
+4. Run local commands like `getkey`, `keys`, `test`, or `status`.
+5. Return to SSH by typing `resume` or pressing **Alt + Enter** again.
 
-Insert the SD card into your T-Deck Plus and power on. The device will automatically load all `.pem` files from `/sdcard/ssh_keys/` and display them at startup.
+---
 
-Connect using the key filename:
+## Command Reference
 
-```
-wifi MyWiFi password123
-sshkey 192.168.1.100 22 pi rpi_key.pem
-```
+### Local Shell Commands
 
-### SD Card Directory Structure
+These commands execute on the device firmware (in idle mode or inside the `[local]> ` shell during active SSH):
 
-```
+| Command | Syntax | Description |
+| :--- | :--- | :--- |
+| **`scan`** | `scan` or `wifi scan` | Scan 2.4 GHz WiFi networks sorted by RSSI |
+| **`connect`** | `connect [SSID\|#] [PASS]` | Connect to WiFi network (or saved network if empty) |
+| **`save`** | `save <SSID\|#> [PASS]` | Save WiFi credentials to NVS without connecting |
+| **`saved`** | `saved` | Display currently saved WiFi credentials |
+| **`forget`** | `forget` | Erase saved WiFi credentials from NVS |
+| **`autoconnect`** | `autoconnect <on\|off>` | Toggle automated background WiFi connect on boot |
+| **`status`** | `status` | Show IP, gateway, subnet, DNS, RSSI, and MAC address |
+| **`disconnect`** | `disconnect` | Disconnect active WiFi connection |
+| **`ssh`** | `ssh <HOST> [PORT] <USER> <PASS>` | Connect to SSH host using password auth |
+| **`sshkey`** | `sshkey <H> [P] <U> <KEYFILE>` | Connect to SSH host using MicroSD/NVS private key |
+| **`keys`** | `keys` or `key` | List all loaded SSH private keys |
+| **`getkey`** | `getkey [REMOTE_PATH] [NAME]` | Fetch private key from remote server (opens picker if empty) |
+| **`resume`** | `resume` or `fg` | Resume active SSH session from Local Shell mode |
+| **`test`** | `test` or `selftest` | Execute on-device terminal verification & self-test suite |
+| **`clear`** | `clear` | Clear the terminal display output |
+| **`exit`** | `exit` | Terminate and disconnect the active SSH session |
+| **`pgup`** / **`pgdn`** | `pgup` / `pgdn` | Scroll terminal backlog one page up / down |
+| **`top`** / **`bottom`** | `top` / `bottom` | Jump to very beginning / end of scrollback buffer |
+| **`scroll`** | `scroll` | Display cheat sheet of scrollback navigation controls |
+| **`version`** | `version` or `ver` | Display PocketSSH build date, IDF version, and features |
+| **`help`** | `help` | Display command help and usage syntax |
+
+### SSH Escape Commands
+
+When connected in interactive SSH mode, typing `:` as the very first character of a new line initiates an escape command without sending keystrokes to the remote shell:
+
+| Escape Command | Description |
+| :--- | :--- |
+| **`:getkey [path] [name]`** | Pull private key from remote host, save to SD card & NVS |
+| **`:keys`** | Print list of loaded private keys in memory |
+| **`:test`** | Run on-device terminal self-tests |
+| **`:exit`** | Close remote channel and disconnect SSH session |
+
+---
+
+## Keyboard & Trackball Cheat Sheet
+
+### Trackball Actions
+
+| Hardware State | Gesture / Action | Resulting Behavior |
+| :--- | :--- | :--- |
+| **Normal Mode** | Roll Up / Down | Scroll backward / forward through terminal output |
+| **Normal Mode** | Short Click | Snap immediately to live prompt (if scrolled back) |
+| **Normal Mode** | Roll Left / Right | Move local cursor left/right or cycle command history |
+| **Any Mode** | Short Click (at bottom) | Toggle **Alt Mode** ON / OFF |
+| **Alt Mode** | Roll Up / Down | Send ANSI `Up` / `Down` arrows (`\033[A`, `\033[B`) |
+| **Alt Mode** | Roll Left / Right | Send ANSI `Left` / `Right` arrows (`\033[D`, `\033[C`) |
+| **SSH Active** | Long Press (>400 ms) | Send `Ctrl+C` (`\x03` / SIGINT) immediately |
+
+### Alt Mode Missing Symbols
+
+Activate Alt Mode (trackball click or **`[ALT]`** touch pill), then press the corresponding key:
+
+| Desired Symbol | Alt Mode Key | Description / Typical Unix Usage |
+| :---: | :---: | :--- |
+| **`~`** | **`t`** or **`T`** | Tilde (User home directory: `cd ~/`) |
+| **`\|`** | **`p`** or **`P`** | Pipe (Command piping: `cat log \| grep err`) |
+| **`\`** | **`b`** or **`B`** | Backslash (Escaping: `mkdir test\ dir`) |
+| **`=`** | **`e`** or **`E`** | Equals (Assignments: `VAR=123`) |
+| **`[`** | **`u`** or **`U`** | Left square bracket (Array indexing / test) |
+| **`]`** | **`i`** or **`I`** | Right square bracket |
+| **`{`** | **`o`** or **`O`** | Left curly brace (Shell expansions: `{a,b}`) |
+| **`}`** | **`j`** or **`J`** | Right curly brace |
+| **`<`** | **`k`** or **`K`** | Less than (Input redirection: `cmd < file`) |
+| **`>`** | **`m`** or **`M`** | Greater than (Output redirection: `cmd > file`) |
+| **``` ` ```** | **`q`** or **`Q`** | Backtick (Command substitution: ``` `date` ```) |
+| **`$`** | **`s`** or **`S`** | Dollar sign (Variables: `$HOME`, `$PATH`) |
+| **`^`** | **`g`** or **`G`** | Caret (Regex / history substitution) |
+| **`&`** | **`n`** or **`N`** | Ampersand (Background jobs: `cmd &`) |
+| **`%`** | **`h`** or **`H`** | Percent (Jobs / format strings) |
+| **`/`** | **`f`** or **`F`** | Forward slash (Directory paths) |
+| **`Tab`** | **`Space`** | Tab auto-completion (`\t`) |
+
+### Alt Mode Control Keys
+
+| Control Signal | Alt Mode Key | Description |
+| :---: | :---: | :--- |
+| **`Ctrl+C`** | **`c`** or physical **`Alt+C`** | SIGINT (Interrupt / abort current process) |
+| **`Ctrl+Z`** | **`z`** | SIGTSTP (Suspend current foreground process) |
+| **`Ctrl+D`** | **`d`** | EOF / Logout |
+| **`Ctrl+L`** | **`l`** | Clear screen buffer |
+| **`Ctrl+A`** | **`a`** | Beginning of line (Home) |
+| **`Ctrl+R`** | **`r`** | Reverse history search in bash/zsh |
+| **`Ctrl+X`** | **`x`** | Exit text editor (nano) |
+| **`Ctrl+W`** | **`w`** | Delete preceding word |
+
+---
+
+## SSH Key Management Guide
+
+PocketSSH uses `libssh2` with `mbedTLS`, requiring **PKCS#1 RSA keys in PEM format**.
+
+### PEM Format Requirement
+
+> [!IMPORTANT]
+> Modern OpenSSH versions default to the proprietary `OPENSSH` key format (`-----BEGIN OPENSSH PRIVATE KEY-----`). The embedded crypto engine requires **PEM format** (`-----BEGIN RSA PRIVATE KEY-----`). Always generate or convert keys using the `-m PEM` parameter.
+
+### Generating & Converting Keys
+
+1. **Generate a new compatible key on your workstation or server**:
+   ```bash
+   ssh-keygen -t rsa -b 4096 -m PEM -f ~/.ssh/id_rsa -N ""
+   cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+   chmod 600 ~/.ssh/authorized_keys ~/.ssh/id_rsa
+   ```
+
+2. **Convert an existing OpenSSH key to PEM format**:
+   ```bash
+   ssh-keygen -p -m PEM -f ~/.ssh/id_rsa
+   ```
+
+3. **Verify the key header**:
+   ```bash
+   head -n 2 ~/.ssh/id_rsa
+   # Expected output:
+   # -----BEGIN RSA PRIVATE KEY-----
+   ```
+
+### Remote Key Fetching (`getkey` / `:getkey`)
+
+You do not need to take out the MicroSD card to install new keys. You can fetch keys over an active SSH connection:
+
+1. Connect to your server with password authentication:
+   ```text
+   ssh 192.168.1.100 22 pi raspberry
+   ```
+2. Switch to Local Shell with **Alt + Enter** (or use the `:getkey` escape command).
+3. Type:
+   ```text
+   getkey
+   ```
+4. PocketSSH scans the remote `~/.ssh/` folder and opens an interactive touch modal dialog showing available `.pem` files.
+5. Tap the desired key. PocketSSH downloads it, validates the PEM header, writes it to `/sdcard/ssh_keys/<name>.pem`, and mirrors it into ESP32 NVS flash.
+6. Now you can authenticate using public key auth:
+   ```text
+   sshkey 192.168.1.100 22 pi id_rsa.pem
+   ```
+
+### MicroSD Directory Structure
+
+```text
 /sdcard/
+├── wifi.cfg                 ← Plaintext WiFi credentials (SSID\nPASSWORD)
+├── wificonfig.json          ← Structured WiFi configuration backup
 └── ssh_keys/
-    ├── rpi_key.pem          ← Raspberry Pi
-    ├── server1.pem          ← Production server
-    ├── backup_server.pem    ← Backup server
-    └── dev_machine.pem      ← Development box
-```
-
-### Key Management
-
-**Multiple Keys**
-- Load as many keys as you need
-- Each server can have its own key
-- Keys are identified by filename
-- All keys loaded automatically on boot
-
-**Supported Formats**
-- File extension: `.pem` or `.PEM` (case-insensitive)
-- Key type: RSA keys in PEM format only
-- Passphrase: Not supported (use `-N ""` when generating)
-- Max file size: 16KB per key
-
-**Available Keys Display**
-On startup, PocketSSH shows all loaded keys:
-```
-PocketSSH v1.3.0
-
-Loaded SSH keys:
-  - rpi_key.pem
-  - server1.pem
-
-Type 'help' for commands
->
-```
-
-If no keys are found:
-```
-No SSH keys found on SD card.
-Place .pem files in /sdcard/ssh_keys/
-```
-
-**Error Handling**
-If you reference a key that doesn't exist:
-```
-> sshkey 192.168.1.100 22 pi missing_key.pem
-Error: SSH key 'missing_key.pem' not found.
-Available keys:
-  - rpi_key.pem
-  - server1.pem
-```
-
-### Troubleshooting
-
-**SD card not detected**
-- Ensure SD card is FAT32 formatted
-- Check SD card is properly inserted before powering on
-- Look for "SD card mounted successfully" in startup logs
-
-**Keys not loading**
-- Verify directory is named `ssh_keys` (lowercase)
-- Check file extension is `.pem` or `.PEM`
-- Ensure files are valid PEM format RSA keys
-- Check ESP-IDF Monitor logs for detailed error messages
-
-**Authentication fails**
-- Verify public key is in server's `~/.ssh/authorized_keys`
-- Check file permissions: `chmod 600 ~/.ssh/authorized_keys`
-- Ensure private key matches the public key on server
-- Try password authentication first to verify credentials
-
-### Advanced: Converting Existing Keys
-
-If you have existing OpenSSH format keys, convert them to PEM:
-
-```bash
-# Convert OpenSSH private key to PEM format
-ssh-keygen -p -m PEM -f ~/.ssh/id_rsa
-```
-
-**Warning**: This modifies your existing key file. Make a backup first:
-```bash
-cp ~/.ssh/id_rsa ~/.ssh/id_rsa.backup
+    ├── id_rsa.pem           ← Primary server key
+    ├── rpi_server.pem       ← Raspberry Pi lab key
+    └── production.pem       ← Cloud VPS key
 ```
 
 ---
 
-### Remote Key Fetching Guide (`:getkey` / `[Get Key]` Button)
+## Verification & Validation (V&V) Guide
 
-PocketSSH allows you to pull private keys directly over an active SSH session into `/sdcard/ssh_keys/` and device NVS without physically removing your SD card.
+To prevent regressions, PocketSSH features a multi-tiered Verification & Validation system:
 
-#### 1. What to Do if the PEM File Does Not Exist on the Server
-If you try fetching a key before generating it on the server, `cat` will fail and PocketSSH will report that the key was not found.
+### Host Pre-Build Tests
 
-Connect to your remote server using standard password authentication (`ssh <host> <port> <user> <pass>`), and run the following commands in the remote shell:
+Located in [tests/test_terminal.py](tests/test_terminal.py), this Python test suite exercises 25 unit and integration tests across 6 core subsystems:
 
+```powershell
+pwsh -File .\tests\run_tests.ps1
+```
+
+```text
+==========================================================
+  POCKETSSH PRE-BUILD VERIFICATION AND VALIDATION TESTS
+==========================================================
+test_ansi_16_standard_colors ... ok
+test_ansi_256_cube_colors ... ok
+test_ansi_256_grayscale ... ok
+test_truecolor_formatting ... ok
+test_end_of_line_detection ... ok
+test_non_destructive_cursor_clamping ... ok
+test_start_of_line_detection ... ok
+test_alt_enter_toggles_local_shell ... ok
+test_cd_tilde_slash_passed_to_remote_shell ... ok
+test_getkey_intercepted_locally ... ok
+test_getkey_without_args_intercepted_locally ... ok
+test_keys_intercepted_locally ... ok
+test_regular_command_passed_to_remote_shell ... ok
+test_test_suite_intercepted_locally ... ok
+test_tilde_slash_never_intercepted_as_escape ... ok
+test_vim_commands_passed_to_remote_shell ... ok
+test_key_name_resolution_fallback ... ok
+test_nvs_keyname_clamping ... ok
+test_openssh_format_rejected_with_warning ... ok
+test_pem_format_accepted ... ok
+test_backspace_blocked_at_start_of_line ... ok
+test_carriage_return_does_not_modify_text ... ok
+test_all_missing_symbols ... ok
+test_alt_space_tab_injection ... ok
+test_simulated_ssh_session_with_getkey ... ok
+
+----------------------------------------------------------------------
+Ran 25 tests in 0.001s
+
+[OK] ALL 25 SUBSYSTEM UNIT AND INTEGRATION TESTS PASSED (100% VERIFIED)
+```
+
+### On-Device Self-Tests
+
+Execute `test` or `selftest` in the local prompt (or tap `Self Test` in the slide-out touch Keys panel). The firmware tests:
+- ANSI 16-color, 256-color cube, and 24-bit TrueColor rendering on the physical LCD.
+- Long-line word wrapping and carriage return separation.
+- Boundary clamping to physical display margins (53x24 character grid).
+
+---
+
+## Architecture & Technical Details
+
+```mermaid
+flowchart TD
+    subgraph InputSubsystems [Hardware Input Subsystems]
+        KB["C3 Keyboard (I2C 0x55)"] --> KeypadTask["keypad_task"]
+        TB["Trackball (GPIO 1, 2, 3, 15)"] --> TrackballTask["trackball_task"]
+        TP["GT911 Touch Screen"] --> LVGLTask["LVGL GUI Task"]
+    end
+
+    subgraph CoreEngine [PocketSSH Terminal Engine]
+        KeypadTask --> KeyDispatcher["Key / Alt Mode Dispatcher"]
+        TrackballTask --> KeyDispatcher
+        KeyDispatcher --> ModeRouter{"Mode Router"}
+        ModeRouter -->|Interactive SSH| StreamWriter["libssh2 Channel Writer"]
+        ModeRouter -->|Local Shell| LocalCmdProc["Local Command Processor"]
+        LocalCmdProc --> KeyMgr["Key Manager / NVS"]
+        LocalCmdProc --> WiFiMgr["WiFi Manager"]
+    end
+
+    subgraph OutputSubsystems [Display & Storage Engine]
+        StreamWriter --> SSHRecv["ssh_receive_task"]
+        SSHRecv --> Batcher["256-Byte Stream Batcher"]
+        Batcher --> AnsiEngine["ANSI 256 / TrueColor / Emoji Engine"]
+        AnsiEngine --> DisplayLock["Thread-Safe Display Lock"]
+        DisplayLock --> ST7789["ST7789 LCD (SPI2_HOST)"]
+        KeyMgr --> SDCard["MicroSD Card (SPI2_HOST)"]
+    end
+```
+
+### Shared SPI Bus Architecture
+The LilyGO T-Deck Plus shares `SPI2_HOST` between the ST7789 display and the MicroSD card:
+- **Display**: Chip Select on `GPIO 12`
+- **MicroSD**: Chip Select on `GPIO 39`, MISO on `GPIO 38`
+- PocketSSH isolates bus transactions with FreeRTOS mutexes and clean chip-select handling, ensuring the MicroSD card remains permanently mounted at `/sdcard` without flickering or display artifacts.
+
+### FreeRTOS Tasks
+- **`keypad_task`**: High-priority I2C polling task for responsive keyboard input.
+- **`trackball_task`**: Dedicated GPIO interrupt handler managing history scrolling, arrow generation, and long-press `Ctrl+C` detection.
+- **`ssh_receive_task`**: Handles non-blocking socket reads (`4 KB` buffer) and passes incoming data to the chunk batcher.
+- **`LVGL task`**: Renders terminal display updates, status bars, and floating HUD widgets.
+
+### Display Performance & Batching
+- **256-Byte Batching**: Flushes output stream data in 256-byte bursts, eliminating display lock starvation.
+- **Zero-Timeout Display Locks**: `bsp_display_lock(0)` ensures UI rendering takes precedence, dropping non-critical frames gracefully under heavy network bursts.
+
+---
+
+## Building & Flashing
+
+### Pre-Built Merged Binary (Offset 0x0)
+
+The release image is generated as a single pre-merged binary combining the bootloader, partition table, and application firmware:
+
+- **Binary**: `build/PocketSSH_merged_0x0.bin`
+- **Flash Offset**: `0x0`
+- **Flash Mode**: `dio`, `80MHz`, `16MB`
+
+#### Flash with ESP Web Flasher (Browser)
+1. Open [ESP Web Flasher](https://espressif.github.io/esptool-js/) in Chrome/Edge.
+2. Connect your T-Deck via USB-C and select the serial port.
+3. Choose `build/PocketSSH_merged_0x0.bin` at offset **`0x0`**.
+4. Click **Program**.
+
+#### Flash with esptool (Command Line)
 ```bash
-# 1. Generate an RSA private key in PEM format (passphrase-less)
-ssh-keygen -t rsa -b 2048 -m PEM -f ~/.ssh/id_rsa -N ""
-
-# 2. Add the public key to authorized_keys so this key can log in
-cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
-
-# 3. Ensure proper SSH permissions
-chmod 700 ~/.ssh
-chmod 600 ~/.ssh/authorized_keys ~/.ssh/id_rsa
-
-# 4. Verify the key header is in PEM format (must begin with "-----BEGIN RSA PRIVATE KEY-----")
-head -n 2 ~/.ssh/id_rsa
+python -m esptool --chip esp32s3 -b 460800 --before default_reset --after hard_reset write_flash 0x0 build/PocketSSH_merged_0x0.bin
 ```
 
-> [!IMPORTANT]
-> **Why `-m PEM` is required**: Modern Linux distributions and OpenSSH generate keys in OpenSSH format (`-----BEGIN OPENSSH PRIVATE KEY-----`) by default. The embedded cryptographic engine (`libssh2` with `mbedTLS`) requires **PKCS#1 PEM** format (`-----BEGIN RSA PRIVATE KEY-----`). Always include `-m PEM`.
+### Building from Source
 
-#### 2. Converting an Existing Server Key to PEM
-If your server already has a key at `~/.ssh/id_rsa` but it was created in OpenSSH format:
-```bash
-ssh-keygen -p -m PEM -f ~/.ssh/id_rsa
+#### Prerequisites
+- [ESP-IDF v5.4 or v5.5](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/get-started/)
+- Python 3.10+
+- PowerShell (Windows) or bash (macOS/Linux)
+
+#### Automated Build & Test Script
+Run [build_firmware.ps1](build_firmware.ps1) from the repository root:
+```powershell
+.\build_firmware.ps1
+```
+This script:
+1. Executes the 25-test host V&V test suite.
+2. Halts compilation immediately if any test fails.
+3. Compiles the project using `idf.py build`.
+4. Merges all components into `build/PocketSSH_merged_0x0.bin`.
+
+To flash directly using the build script:
+```powershell
+.\flash.ps1 -Port COM5
 ```
 
-#### 3. Fetching the Key to PocketSSH
-Once the PEM key exists on the server:
-1. Tap the **`[KEY]`** button in the top bar to open the side panel, then tap **`[Get Key]`**.
-2. Or type the escape command directly into the terminal:
-   ```text
-   :getkey ~/.ssh/id_rsa pi_key
-   ```
-   *(Syntax: `:getkey <remote_path> [local_name]`)*
+---
 
-PocketSSH will automatically:
-- Download and validate the PEM header.
-- Save the key to `/sdcard/ssh_keys/pi_key.pem`.
-- Persist the key into ESP32 NVS flash.
-- Register the key in memory so you can immediately connect with:
-  ```text
-  sshkey <HOST> <PORT> <USER> pi_key.pem
-  ```
+## Version History
 
+### v1.3.0 (October 31 - November 1, 2026)
+- **Added**: Alt+Enter Local Shell Toggle (`[local]> `) allowing seamless switching between remote SSH and local commands without disconnecting.
+- **Added**: Interactive Remote Key Fetcher (`getkey` / `:getkey`) with touch file picker modal and PEM format checking.
+- **Added**: Pre-Build Verification & Validation (V&V) Host Test Suite (25 automated unit & integration tests) integrated into `build_firmware.ps1`.
+- **Added**: Pure Tilde (`~/`) passthrough deconfliction (zero delay, no escape buffering or double-echoing).
+- **Added**: Single pre-merged binary release (`PocketSSH_merged_0x0.bin` at offset `0x0`).
+- **Added**: MicroSD Card Permanent Mount & Shared SPI Bus Architecture on `SPI2_HOST`.
+- **Added**: Real-Time SSH Activity Indicator (`[WAIT...]`, live rotating spinner, `[ONLINE]`).
+- **Added**: Dynamic Alt Mode, Dual-Behavior Trackball (Scroll vs Arrows), and 16 missing symbol chords.
+- **Added**: Terminal Line Discipline: non-destructive backspace clamping and separate `\r` vs `\n` handling.
+- **Added**: Full ANSI SGR 256-Color & TrueColor Engine with literal `#` syntax isolation.
+- **Added**: Smart Emoji Log Engine & Multi-Byte UTF-8 Stream Parser (65+ developer emoji badges).
+- **Added**: 2.4 GHz WiFi Scanner (`scan`), WPA3-SAE Personal authentication, and persistent auto-connect.
+- **Added**: 16 KB Circular Scrollback Buffer with momentum touch scrolling and trackball navigation.
 
+### v1.2.0 (February 1, 2026)
+- **Added**: SSH public key authentication support via MicroSD card.
+- **Added**: Quote-aware argument parsing for WiFi networks with spaces.
+- **Improved**: `libssh2_userauth_publickey_frommemory()` integration.
 
-## Architecture
+### v1.1.0 (January 14, 2026)
+- **Fixed**: Boot loop issue on rapid power cycles (GPIO 4 ADC settling delay).
+- **Added**: Touch-to-position cursor functionality.
 
-### Framework & Libraries
-- **ESP-IDF**: v5.5.1 - Official Espressif IoT Development Framework
-- **LVGL**: v9.x - Graphics library with thread-safe display locking (`bsp_display_lock/unlock`)
-- **libssh2**: SSH2 protocol implementation (see details below)
-- **FreeRTOS**: Multi-task architecture for concurrent operations
+### v1.0.0 (Initial Release)
+- Full SSH2 terminal with PTY support.
+- Hardware keyboard, trackball navigation, and touch gestures.
+- Battery monitoring and NVS command history.
 
-### System Tasks
-- **keypad_task**: Hardware keyboard input processing with non-blocking display updates
-- **trackball_task**: Trackball GPIO monitoring for history navigation (0ms timeout, drops input if display busy)
-- **ssh_receive_task**: SSH data reception and terminal output rendering
-- **LVGL task**: GUI rendering and touch gesture detection
-
-### Display Performance
-- Non-blocking input system: `bsp_display_lock(0)` prioritizes screen rendering over input
-- Buffered display updates prevent watchdog timeouts during large transfers
-- Zero-timeout locks drop input gracefully when display is busy
-
-## Using libssh2
-
-PocketSSH uses **libssh2** for SSH2 protocol implementation, providing secure remote shell access.
-
-### Integration
-- **Library**: `skuodi__libssh2_esp` component from ESP Component Registry
-- **Configuration**: Managed via `idf_component.yml` in the `main/` directory
-- **Version**: Compatible with ESP-IDF v5.x
-
-### Implementation Details
-
-#### Connection Flow
-```cpp
-1. libssh2_session_init() - Initialize SSH session
-2. libssh2_session_handshake() - Perform SSH handshake
-3a. libssh2_userauth_password() - Authenticate with username/password
-   OR
-3b. libssh2_userauth_publickey_frommemory() - Authenticate with private key
-4. libssh2_channel_open_session() - Open SSH channel
-5. libssh2_channel_request_pty() - Request PTY for terminal emulation
-6. libssh2_channel_shell() - Start shell session
-```
-
-#### Public Key Authentication
-
-PocketSSH supports SSH public key authentication using keys loaded from SD card:
-
-**Key Storage:**
-- Keys loaded from `/sdcard/ssh_keys/` directory on boot
-- Stored in memory using `std::map<std::string, std::string>`
-- Referenced by filename in `sshkey` command
-
-**Key Requirements:**
-- **Format**: PEM format RSA keys (OpenSSH format not supported by mbedTLS)
-- **File Extension**: `.pem` or `.PEM` (case-insensitive)
-- **Passphrase**: Only passphrase-less keys supported
-- **Max Size**: 16KB per key file
-
-**Usage:**
-```
-sshkey 192.168.1.100 22 pi rpi_key.pem
-```
-
-**Implementation:**
-- Uses `libssh2_userauth_publickey_frommemory()`
-- Keys loaded via SPI SD card interface before LVGL initialization
-- Memory-efficient: Keys stored as std::string in map container
-- Automatic discovery: All `.pem` files loaded from `/sdcard/ssh_keys/`
-
-**Security Benefits:**
-- No password transmitted over network
-- Keys can be easily revoked from server's authorized_keys
-- Stronger cryptographic guarantees than passwords
-- Immune to brute-force password attacks
-
-See **SSH Key Setup Guide** section above for detailed setup instructions.
-
-#### PTY Terminal Mode
-- **Terminal Type**: vt100 emulation
-- **PTY Size**: 80 columns × 24 rows (configurable)
-- **Mode**: Provides proper terminal interaction with command prompts, colors, and cursor control
-
-#### Data Handling
-- **Non-blocking mode**: `libssh2_session_set_blocking(session, 0)`
-- **Read buffer**: 4KB chunks processed by `ssh_receive_task`
-- **Write operations**: Direct keyboard input → `libssh2_channel_write()`
-- **Control sequences**: Special keys (Ctrl+C, Tab, etc.) sent as escape sequences
-
-#### Security Features
-- **Protocol**: SSH2 with encryption
-- **Authentication**: 
-  - Password-based (username/password)
-  - Public key-based (RSA keys in PEM format)
-- **Session**: Secure encrypted channel for all data transfer
-- **Key handling**: Private keys processed in memory, not persisted to storage
-
-### Component Configuration
-
-Add to your `main/idf_component.yml`:
-```yaml
-dependencies:
-  skuodi__libssh2_esp: "^1.1.0"
-```
-
-The library automatically handles:
-- TCP socket management
-- Encryption/decryption
-- SSH protocol negotiation
-- Keep-alive packets
-- Session cleanup
-
-### Troubleshooting libssh2
-
-**Connection fails**: Check network connectivity and SSH server accessibility
-```bash
-# Test SSH server from another machine
-ssh user@host -p port
-```
-
-**Authentication errors**: Verify username/password, check server auth methods:
-```bash
-ssh -v user@host  # Verbose output shows auth methods
-```
-
-**Data corruption**: Ensure PTY mode is enabled for proper terminal handling
-```cpp
-libssh2_channel_request_pty(channel, "vt100");
-```
-
-## Example Usage
-
-### Typical Session Flow
-```
-> connect MyWiFi password123
-Connecting to WiFi: MyWiFi
-WiFi connected successfully!
-
-> ssh 192.168.1.100 22 pi raspberry
-Connecting to 192.168.1.100...
-Socket connected, initializing SSH session...
-Performing SSH handshake...
-SSH handshake successful
-Authenticating as pi...
-Authentication successful
-Opening SSH channel...
-SSH channel opened - connected!
-
-pi@raspberrypi:~ $ ls -la
-total 32
-drwxr-xr-x  4 pi   pi   4096 Jan  7 10:30 .
-drwxr-xr-x  3 root root 4096 Jan  1 00:00 ..
--rw-r--r--  1 pi   pi    220 Jan  1 00:00 .bash_logout
-...
-
-pi@raspberrypi:~ $ uname -a
-Linux raspberrypi 5.15.84-v8+ #1613 SMP PREEMPT Thu Jan 5 12:03:08 GMT 2023 aarch64 GNU/Linux
-
-> disconnect
-Disconnected from SSH server
-```
-
-## Security Considerations
-
-**Current Security Features:**
-- Uses SSH2 protocol with encryption (secure!)
-- Passwords are encrypted during transmission
-- Public key authentication support (v1.2.0+)
-- Full cipher support (AES, 3DES, Blowfish, etc.)
-- Private keys handled in memory only
-
-**Security Notes:**
-- Passwords/keys stored in memory during session only
-- No host key verification (accepts any server)
-- Public key authentication is more secure than passwords
-- Private keys are not persisted to storage
-- **Recommended for production**:
-  - Add host key verification
-  - Implement encrypted storage for private keys
-  - Use ESP32's secure boot and flash encryption
-  - Consider secure element integration for key storage
-
-## Memory Requirements
-
-- Minimum 8KB stack for SSH task
-- ~40-50KB heap for SSH session
-- Additional memory for terminal display (LVGL)
-- Optimized for ESP32 memory constraints
-
-## Known Limitations
-
-**Screen-Intensive Applications:**
-- Applications with continuous screen updates (e.g., `htop`, `top`, `watch`) may be difficult to use
-- The 320x240 display and rendering performance make real-time updates challenging
-- **Recommended**: Use static commands like `ps`, `df`, `ls` instead of interactive/updating tools
-- **Alternative**: Use `top -n 1` for single-iteration output instead of continuous mode
-
-**Best Practices:**
-- Standard shell commands work well: `ls`, `cd`, `cat`, `grep`, `find`
-- Text editors like `nano` and `vim` are usable with patience
-- Scripts and one-time commands execute perfectly
-- Avoid continuous monitoring tools (`htop`, `tail -f`, `watch`)
+---
 
 ## Troubleshooting
 
 ### WiFi Connection Issues
-- Check SSID and password are correct (use quotes if they contain spaces)
-- Verify WiFi router is in range
-- Ensure WPA2-PSK authentication is supported
+- **`[201] AP not found`**: Ensure you are connecting to a 2.4 GHz network. ESP32-S3 does not support 5 GHz bands.
+- **`[202] Authentication failed`**: Verify your password. If your SSID or password contains spaces, enclose them in double quotes (e.g. `connect "My Network" "My Password"`).
+- **Mesh / Dual-Band Routers**: If your router shares one SSID for 2.4 GHz and 5 GHz, use `scan` to find the exact scan index of the 2.4 GHz BSSID and connect via `connect <#> <password>`.
 
 ### SSH Connection Issues
-- Verify server IP and port (default SSH is port 22)
-- Check firewall settings on target server
-- Ensure SSH server is running (`sudo systemctl status ssh`)
-- **For password auth**: Verify username and password are correct
-- **For password auth**: Check SSH server allows password authentication (`PasswordAuthentication yes` in sshd_config)
-- **For key auth**: Ensure public key is in server's `~/.ssh/authorized_keys`
-- **For key auth**: Verify private key is in PEM format (use `ssh-keygen -m PEM`)
-- **For key auth**: Check key permissions on server (authorized_keys should be 600)
+- **`command not found: :getkey`**: You typed `:getkey` in the remote shell instead of the local prompt. Press **Alt + Enter** to enter Local Shell mode (`[local]> `), then type `getkey`.
+- **`OpenSSH format rejected`**: Modern OpenSSH keys are generated in `OPENSSH` format. Run `ssh-keygen -p -m PEM -f ~/.ssh/id_rsa` on your server to convert to PKCS#1 PEM format.
+- **`Key file not found`**: Ensure the `.pem` file exists in `/sdcard/ssh_keys/` or fetch it directly using `getkey`. Type `keys` to view loaded keys.
 
-### Keyboard Not Working
-- Check I2C connection to keyboard
-- Verify keyboard I2C address (0x55)
-- Check I2C bus initialization
+### Keyboard & Trackball
+- **Typing missing symbols**: Click the trackball to toggle Alt Mode (yellow HUD banner appears), then press the shortcut key (e.g., `t` for `~`, `p` for `|`, `Space` for `Tab`).
+- **Exiting runaway programs**: Long-press the trackball for >400 ms or press physical **`Alt + C`** to send `Ctrl+C` (`\x03`).
 
-### Display Issues
-- Ensure LVGL is properly initialized
-- Check SPI connection to display
-- Verify display driver configuration
+---
 
-## Hardware Pinout
+## License & Credits
 
-### ESP32-S3 T-Deck Plus
-- **Display**: ST7789 SPI LCD (320×240 pixels)
-- **Touch**: GT911 I2C touch controller
-- **Keyboard**: C3 module via I2C
-- **Trackball GPIOs**:
-  - GPIO 1: Trackball Up
-  - GPIO 2: Trackball Left
-  - GPIO 3: Trackball Down
-  - GPIO 15: Trackball Right
-- **Battery**: GPIO 4 (ADC1 CH3) - Voltage monitoring
-
-## Deployment
-
-### Release Firmware Image
-
-A ready-to-deploy **merged binary** is available that includes bootloader, partition table, and application:
-- **File**: `build/PocketSSH-v1.2.0-release.bin`
-- **Flash Address**: `0x0` (single merged binary)
-- **Flash Settings**: 
-  - **Mode**: DIO (Dual I/O)
-  - **Frequency**: 80MHz
-  - **Size**: 16MB
-
-### Web-Based Installation (Recommended)
-
-Flash firmware via browser using ESP Web Flasher:
-1. Visit: https://espressif.github.io/esptool-js/
-2. Connect ESP32-S3 device via USB
-3. Click "Connect" and select serial port
-4. Add file: `PocketSSH-v1.2.0-release.bin` at offset `0x0`
-5. Click "Program" to flash
-
-### Command Line Installation
-
-```bash
-esptool.py --chip esp32s3 --baud 921600 write_flash 0x0 build/PocketSSH-v1.2.0-release.bin
-```
-
-## Credits
-
-- ESP-IDF framework by Espressif Systems
-- LVGL graphics library
-- libssh2 SSH protocol library
-- FreeRTOS real-time operating system
-
-## License
-
-This project uses various ESP-IDF components and open-source libraries:
-- **ESP-IDF**: Apache License 2.0
+- **ESP-IDF**: Apache License 2.0 (Espressif Systems)
 - **LVGL**: MIT License
-- **libssh2**: BSD-style license
-
-See individual component licenses for complete details.
+- **libssh2**: BSD-3-Clause License
+- **PocketSSH**: MIT License
