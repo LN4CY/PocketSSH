@@ -1955,8 +1955,19 @@ void SSHTerminal::handle_key_input(char key)
                 append_text("  scroll                     - Show scrollback controls\n");
                 append_text("  Tab / Alt+Space            - Auto-complete command, SSID or keys\n");
                 append_text("  version                    - Show version & build info\n");
+                append_text("  invert                     - Toggle LCD color inversion\n");
                 append_text("  resume / fg                - Resume active SSH session (or Alt+Enter)\n");
                 append_text("  help                       - Show this help\n");
+            }
+            else if (current_input == "invert" || current_input == "lcd invert" || current_input == "color invert") {
+                static bool s_inverted = false;
+                s_inverted = !s_inverted;
+                bsp_display_invert_color(s_inverted);
+                if (bsp_display_lock(pdMS_TO_TICKS(100))) {
+                    lv_obj_invalidate(lv_scr_act());
+                    bsp_display_unlock();
+                }
+                append_text(s_inverted ? "Display color inversion: ON\n" : "Display color inversion: OFF (Normal)\n");
             }
             else if (ssh_connected) {
                 send_command(current_input.c_str());

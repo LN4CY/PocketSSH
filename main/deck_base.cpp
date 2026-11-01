@@ -634,6 +634,12 @@ extern "C" void app_main(void)
             ESP_LOGI(TAG, "Touch input registered with LVGL");
         } else {
             ESP_LOGI(TAG, "Touch controller not found - running in Trackball & Keyboard mode");
+            // In Wokwi simulation, wokwi-ili9341 is used instead of ST7789 IPS.
+            // ST7789 IPS requires hardware color inversion (INVON 0x21), but ILI9341 is a TN panel
+            // where INVON inverts colors into negative (black becomes white, green becomes magenta).
+            // Disable color inversion for Wokwi simulation so colors are accurate:
+            bsp_display_invert_color(false);
+            ESP_LOGI(TAG, "Wokwi simulation detected: display color inversion disabled (true colors)");
         }
 
         bsp_display_lock(0);

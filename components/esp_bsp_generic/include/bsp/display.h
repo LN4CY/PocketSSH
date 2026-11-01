@@ -126,6 +126,16 @@ esp_err_t bsp_display_backlight_on(void);
  */
 esp_err_t bsp_display_backlight_off(void);
 
+/**
+ * @brief Invert display colors
+ *
+ * @param[in] invert True to invert colors, false for normal colors
+ * @return
+ *      - ESP_OK   On success
+ *      - Else     esp_lcd failure
+ */
+esp_err_t bsp_display_invert_color(bool invert);
+
 #ifdef __cplusplus
 }
 #endif

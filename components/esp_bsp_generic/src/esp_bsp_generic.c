@@ -559,6 +559,8 @@ err:
     return ret;
 }
 
+static esp_lcd_panel_handle_t s_panel_handle = NULL;
+
 static lv_display_t *bsp_display_lcd_init(void)
 {
     esp_lcd_panel_io_handle_t io_handle = NULL;
@@ -567,6 +569,8 @@ static lv_display_t *bsp_display_lcd_init(void)
         .max_transfer_sz = (BSP_LCD_H_RES * CONFIG_BSP_LCD_DRAW_BUF_HEIGHT) * sizeof(uint16_t),
     };
     BSP_ERROR_CHECK_RETURN_NULL(bsp_display_new(&bsp_disp_cfg, &panel_handle, &io_handle));
+
+    s_panel_handle = panel_handle;
 
     esp_lcd_panel_disp_on_off(panel_handle, true);
 
@@ -722,6 +726,14 @@ bool bsp_display_lock(uint32_t timeout_ms)
 void bsp_display_unlock(void)
 {
     lvgl_port_unlock();
+}
+
+esp_err_t bsp_display_invert_color(bool invert)
+{
+    if (s_panel_handle) {
+        return esp_lcd_panel_invert_color(s_panel_handle, invert);
+    }
+    return ESP_ERR_INVALID_STATE;
 }
 #endif //CONFIG_BSP_DISPLAY_ENABLED
 
