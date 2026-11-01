@@ -130,14 +130,14 @@ def run_tests():
     runner = QEMURunner(qemu_bin, flash_bin, efuse_bin)
 
     passed_count = 0
-    total_tests = 5
+    total_tests = 8
 
     try:
         print("[*] Launching PocketSSH in virtual ESP32-S3 target...")
         runner.start()
 
         # TEST 1: Virtual Target Boot & Banner
-        print("[TEST 1/5] Verifying ROM bootloader & virtual target detection...", end="", flush=True)
+        print("[TEST 1/8] Verifying ROM bootloader & virtual target detection...", end="", flush=True)
         if runner.wait_for("[PocketSSH] Virtual Target Boot OK!", timeout=12.0) and \
            runner.wait_for("Environment: Virtual ESP32-S3 Target", timeout=8.0) and \
            runner.wait_for("> ", timeout=5.0):
@@ -151,7 +151,7 @@ def run_tests():
             sys.exit(1)
 
         # TEST 2: Command 'version'
-        print("[TEST 2/5] Testing interactive 'version' command...", end="", flush=True)
+        print("[TEST 2/8] Testing interactive 'version' command...", end="", flush=True)
         runner.send_command("version")
         if runner.wait_for("PocketSSH Version", timeout=6.0) and \
            runner.wait_for("ESP32-S3 LilyGO T-Deck", timeout=6.0):
@@ -165,7 +165,7 @@ def run_tests():
             sys.exit(1)
 
         # TEST 3: Command 'help'
-        print("[TEST 3/5] Testing interactive 'help' command...", end="", flush=True)
+        print("[TEST 3/8] Testing interactive 'help' command...", end="", flush=True)
         runner.send_command("help")
         if runner.wait_for("Available commands:", timeout=6.0) and \
            runner.wait_for("scan", timeout=6.0) and \
@@ -180,9 +180,10 @@ def run_tests():
             sys.exit(1)
 
         # TEST 4: Command 'keys'
-        print("[TEST 4/5] Testing SSH key manager command 'keys'...", end="", flush=True)
+        print("[TEST 4/8] Testing SSH key manager command 'keys'...", end="", flush=True)
         runner.send_command("keys")
-        if runner.wait_for("Loaded SSH Keys", timeout=6.0):
+        if runner.wait_for("Loaded SSH Keys", timeout=6.0) and \
+           runner.wait_for("id_ed25519_virtual", timeout=6.0):
             print(" [PASS]")
             passed_count += 1
         else:
@@ -192,8 +193,51 @@ def run_tests():
             print("-----------------------")
             sys.exit(1)
 
-        # TEST 5: Unknown Command Handling
-        print("[TEST 5/5] Testing unknown command rejection & prompt recovery...", end="", flush=True)
+        # TEST 5: Wi-Fi Scanner 'scan'
+        print("[TEST 5/8] Testing virtual Wi-Fi scan ('scan')...", end="", flush=True)
+        runner.send_command("scan")
+        if runner.wait_for("Scanning 2.4 GHz WiFi networks", timeout=6.0) and \
+           runner.wait_for("Wokwi-GUEST", timeout=6.0):
+            print(" [PASS]")
+            passed_count += 1
+        else:
+            print(" [FAIL]")
+            print("--- Captured Output ---")
+            print(runner.get_output()[-500:])
+            print("-----------------------")
+            sys.exit(1)
+
+        # TEST 6: Wi-Fi Connection 'connect'
+        print("[TEST 6/8] Testing virtual Wi-Fi connection ('connect 1')...", end="", flush=True)
+        runner.send_command("connect 1")
+        if runner.wait_for("Connecting to 'Wokwi-GUEST'", timeout=6.0) and \
+           runner.wait_for("WiFi Connected! IP Address: 192.168.1.100", timeout=6.0):
+            print(" [PASS]")
+            passed_count += 1
+        else:
+            print(" [FAIL]")
+            print("--- Captured Output ---")
+            print(runner.get_output()[-500:])
+            print("-----------------------")
+            sys.exit(1)
+
+        # TEST 7: Network Status 'status'
+        print("[TEST 7/8] Testing network status report ('status')...", end="", flush=True)
+        runner.send_command("status")
+        if runner.wait_for("WiFi Status ===", timeout=6.0) and \
+           runner.wait_for("State:    Connected", timeout=6.0) and \
+           runner.wait_for("IP:       192.168.1.100", timeout=6.0):
+            print(" [PASS]")
+            passed_count += 1
+        else:
+            print(" [FAIL]")
+            print("--- Captured Output ---")
+            print(runner.get_output()[-500:])
+            print("-----------------------")
+            sys.exit(1)
+
+        # TEST 8: Unknown Command Handling
+        print("[TEST 8/8] Testing unknown command rejection & prompt recovery...", end="", flush=True)
         runner.send_command("testinvalidcmd")
         if runner.wait_for("Unknown command", timeout=6.0):
             print(" [PASS]")

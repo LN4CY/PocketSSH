@@ -453,14 +453,17 @@ pwsh -File .\tests\run_qemu_test.ps1
 =================================================================
 [*] Found QEMU emulator: ...\tools\qemu-xtensa\...\qemu-system-xtensa.exe
 [*] Launching PocketSSH in virtual ESP32-S3 target...
-[TEST 1/5] Verifying ROM bootloader & virtual target detection... [PASS]
-[TEST 2/5] Testing interactive 'version' command... [PASS]
-[TEST 3/5] Testing interactive 'help' command... [PASS]
-[TEST 4/5] Testing SSH key manager command 'keys'... [PASS]
-[TEST 5/5] Testing unknown command rejection & prompt recovery... [PASS]
+[TEST 1/8] Verifying ROM bootloader & virtual target detection... [PASS]
+[TEST 2/8] Testing interactive 'version' command... [PASS]
+[TEST 3/8] Testing interactive 'help' command... [PASS]
+[TEST 4/8] Testing SSH key manager command 'keys'... [PASS]
+[TEST 5/8] Testing virtual Wi-Fi scan ('scan')... [PASS]
+[TEST 6/8] Testing virtual Wi-Fi connection ('connect 1')... [PASS]
+[TEST 7/8] Testing network status report ('status')... [PASS]
+[TEST 8/8] Testing unknown command rejection & prompt recovery... [PASS]
 [*] Terminating virtual QEMU target...
 =================================================================
-[OK] ALL 5/5 VIRTUAL TARGET QEMU TESTS PASSED!
+[OK] ALL 8/8 VIRTUAL TARGET QEMU TESTS PASSED!
 =================================================================
 ```
 
@@ -482,12 +485,38 @@ Or run the QEMU binary directly from the project directory (`e:\proj\AiAssited\P
     -nographic -serial mon:stdio
 ```
 
-You can type local commands like `help`, `version`, `keys`, `status`, etc., directly into your PowerShell terminal with live character echo and history editing. Press `Ctrl+A` then `X` to exit QEMU.
+You can type local commands like `help`, `version`, `keys`, `scan`, `connect 1`, `status`, etc., directly into your PowerShell terminal with live character echo and history editing. Press `Ctrl+A` then `X` to exit QEMU.
+
+---
+
+### Wokwi Simulation (Full GUI, Wi-Fi & SD Card Simulation)
+
+PocketSSH includes out-of-the-box configuration for [Wokwi](https://wokwi.com), enabling complete hardware simulation including the **ST7789 320x240 LCD display**, **MicroSD Card**, **Octal PSRAM (8MB)**, and **real Wi-Fi internet access (`Wokwi-GUEST`)**.
+
+#### 1. Interactive Visual Simulation in VS Code
+1. Install the official **Wokwi Simulator** extension from the VS Code Marketplace.
+2. Build the firmware: `.\build_firmware.ps1`.
+3. Open `diagram.json` in VS Code and press **F1** -> **Wokwi: Start Simulator**.
+4. The virtual LilyGO T-Deck will boot with live graphics rendering on the 320x240 screen, accepting keyboard input and connecting to virtual Wi-Fi.
+
+#### 2. Running Automated Wokwi Tests
+Automated headless scenario testing is handled via `wokwi-cli`:
+
+```powershell
+# Run the automated scenario test runner:
+pwsh -File .\tests\run_wokwi_test.ps1
+```
+
+*Note: Automated CLI simulation requires a free Wokwi CI token from [wokwi.com/dashboard/ci](https://wokwi.com/dashboard/ci). Set it in PowerShell: `$env:WOKWI_CLI_TOKEN = "wok_..."`.*
+
+#### 3. Continuous Integration (GitHub Actions)
+PocketSSH includes `.github/workflows/wokwi_test.yml` which automatically compiles firmware with ESP-IDF and executes the `tests/wokwi_scenario.yaml` integration suite on every push and pull request.
 
 ### Automated Testing Strategy
-Testing is decoupled from physical hardware through host-level and virtual environment execution:
+Testing is decoupled from physical hardware through a tiered multi-level architecture:
 - **Host Unit & Integration Tests**: Run in milliseconds via `tests/run_tests.ps1` before every build, ensuring zero regression in terminal emulation, character mapping, and session routing.
-- **Virtual ESP32-S3 QEMU Tests**: Run in ~8 seconds via `tests/run_qemu_test.ps1` after every build, booting the real ESP32-S3 Xtensa binary and validating FreeRTOS kernel startup, heap allocations, command dispatch, and serial line discipline.
+- **Virtual ESP32-S3 QEMU Tests**: Run in ~8 seconds via `tests/run_qemu_test.ps1` after every build, booting the real ESP32-S3 Xtensa binary and validating FreeRTOS kernel startup, heap allocations, command dispatch, and serial line discipline 100% offline.
+- **Wokwi Simulator CI**: Validates the visual ST7789 display controller, Octal PSRAM initialization, real `Wokwi-GUEST` network handshake, and SD card file systems.
 
 ---
 

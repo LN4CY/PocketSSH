@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "author": "PocketSSH",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-s3-devkitc-1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {
+        "flashSize": "16",
+        "psramSize": "8",
+        "psramType": "octal"
+      }
+    },
+    {
+      "type": "wokwi-ili9341",
+      "id": "lcd",
+      "top": -260,
+      "left": 120,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-microsd-card",
+      "id": "sdcard",
+      "top": 180,
+      "left": 280,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn_boot",
+      "top": 120,
+      "left": -120,
+      "attrs": { "color": "blue", "label": "BOOT / Click" }
+    }
+  ],
+  "connections": [
+    [ "esp:3V3", "lcd:VCC", "red", [ "v0" ] ],
+    [ "esp:GND.1", "lcd:GND", "black", [ "v0" ] ],
+    [ "esp:12", "lcd:CS", "yellow", [ "v0" ] ],
+    [ "esp:11", "lcd:D/C", "orange", [ "v0" ] ],
+    [ "esp:41", "lcd:MOSI", "green", [ "v0" ] ],
+    [ "esp:40", "lcd:SCK", "blue", [ "v0" ] ],
+    [ "esp:42", "lcd:LED", "white", [ "v0" ] ],
+    [ "esp:3V3", "sdcard:VCC", "red", [ "v0" ] ],
+    [ "esp:GND.1", "sdcard:GND", "black", [ "v0" ] ],
+    [ "esp:39", "sdcard:CS", "yellow", [ "v0" ] ],
+    [ "esp:41", "sdcard:DI", "green", [ "v0" ] ],
+    [ "esp:38", "sdcard:DO", "purple", [ "v0" ] ],
+    [ "esp:40", "sdcard:SCK", "blue", [ "v0" ] ],
+    [ "esp:0", "btn_boot:1.l", "green", [ "v0" ] ],
+    [ "esp:GND.1", "btn_boot:2.l", "black", [ "v0" ] ]
+  ],
+  "serialMonitor": {
+    "display": "terminal"
+  }
+}

@@ -638,6 +638,18 @@ extern "C" void app_main(void)
 
     // Create terminal instance
     ssh_terminal = new SSHTerminal();
+    if (virtual_target) {
+        ssh_terminal->set_virtual_target(true);
+        const char* vkey = "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+                           "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n"
+                           "QyNTUxOQAAACD0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0uQAAAJj8e1X1/HtV\n"
+                           "9QAAAAtzc2gtZWQyNTUxOQAAACD0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0uQ\n"
+                           "AAAEBLM1N2O3P4Q5R6S7T8U9V0W1X2Y3Z0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8\n"
+                           "s9t0uPRrVvZzd4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0uQAAAAp2aXJ0dWFsX3Rlc3QB\n"
+                           "AgMEBQ==\n"
+                           "-----END OPENSSH PRIVATE KEY-----\n";
+        ssh_terminal->load_key_from_memory("id_ed25519_virtual", vkey, strlen(vkey));
+    }
     load_ssh_keys_from_sd(ssh_terminal);
     if (disp) {
         ssh_screen = ssh_terminal->create_terminal_screen();

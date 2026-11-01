@@ -1,0 +1,31 @@
+name: 'PocketSSH Automated Virtual Verification'
+version: 1
+author: 'PocketSSH'
+steps:
+  # 1. Wait for ESP32-S3 boot & serial prompt
+  - wait-serial: "PocketSSH v1.3.0"
+  - delay: 300ms
+
+  # 2. Test 'version' command
+  - write-serial: "version\n"
+  - wait-serial: "PocketSSH v1.3.0"
+  - delay: 200ms
+
+  # 3. Test 'help' command
+  - write-serial: "help\n"
+  - wait-serial: "Available commands:"
+  - delay: 200ms
+
+  # 4. Test SSH key manager command 'keys'
+  - write-serial: "keys\n"
+  - wait-serial: "SSH"
+  - delay: 200ms
+
+  # 5. Connect to Wokwi virtual Wi-Fi (Wokwi-GUEST)
+  - write-serial: "connect Wokwi-GUEST\n"
+  - wait-serial: "Connecting to 'Wokwi-GUEST'"
+  - delay: 2s
+
+  # 6. Verify Wi-Fi network status
+  - write-serial: "status\n"
+  - wait-serial: "WiFi Status:"

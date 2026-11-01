@@ -83,6 +83,9 @@ public:
     void set_wifi_autoconnect_enabled(bool enabled);
     static const char* wifi_reason_to_string(uint8_t reason);
     
+    void set_virtual_target(bool is_virtual) { m_is_virtual_target = is_virtual; }
+    bool is_virtual_target() const { return m_is_virtual_target; }
+    
     lv_obj_t* get_screen() { return terminal_screen; }
     
     void update_status_bar();
@@ -208,6 +211,7 @@ private:
     
     volatile bool ssh_rx_paused;
     volatile bool ssh_rx_is_paused;
+    bool m_is_virtual_target;
     lv_obj_t* getkey_dialog;
     lv_obj_t* getkey_path_ta;
     

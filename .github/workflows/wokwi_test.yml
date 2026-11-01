@@ -1,0 +1,34 @@
+name: Wokwi Simulation Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  wokwi-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build Firmware with ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.2.2
+          target: esp32s3
+          path: '.'
+
+      - name: Run Wokwi Automated Integration Scenario
+        uses: wokwi/wokwi-ci-action@v1
+        with:
+          token: ${{ secrets.WOKWI_CLI_TOKEN }}
+          path: '.'
+          scenario: 'tests/wokwi_scenario.yaml'
+          timeout: 35000
+          fail_text: 'Guru Meditation Error'

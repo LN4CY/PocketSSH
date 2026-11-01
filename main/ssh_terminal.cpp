@@ -90,6 +90,7 @@ SSHTerminal::SSHTerminal()
       port_number(22),
       ssh_rx_paused(false),
       ssh_rx_is_paused(false),
+      m_is_virtual_target(false),
       getkey_dialog(NULL),
       getkey_path_ta(NULL)
 {
@@ -221,6 +222,9 @@ esp_err_t SSHTerminal::ensure_wifi_driver_started(SSHTerminal* terminal)
     if (terminal) {
         s_terminal_instance = terminal;
     }
+    if (terminal && terminal->is_virtual_target()) {
+        return ESP_OK;
+    }
     if (s_wifi_driver_started) {
         return ESP_OK;
     }
@@ -294,6 +298,18 @@ esp_err_t SSHTerminal::init_wifi(const char* ssid, const char* password)
     if (!ssid || strlen(ssid) == 0) {
         append_text("ERROR: SSID cannot be empty\n");
         return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (m_is_virtual_target) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Connecting to '%s' (Virtual Target)...\n", ssid);
+        append_text(buf);
+        vTaskDelay(pdMS_TO_TICKS(300));
+        wifi_connected = true;
+        connected_ssid = ssid;
+        append_text("WiFi Connected! IP Address: 192.168.1.100\n");
+        update_status_bar();
+        return ESP_OK;
     }
     
     ensure_wifi_driver_started(this);
@@ -374,6 +390,23 @@ bool SSHTerminal::is_wifi_connected()
 
 esp_err_t SSHTerminal::scan_wifi()
 {
+    if (m_is_virtual_target) {
+        append_text("Scanning 2.4 GHz WiFi networks (Virtual Target)...\n");
+        vTaskDelay(pdMS_TO_TICKS(300));
+        cached_scan_results.clear();
+        wifi_ap_record_t sim_ap = {};
+        strncpy((char*)sim_ap.ssid, "Wokwi-GUEST", sizeof(sim_ap.ssid) - 1);
+        sim_ap.rssi = -45;
+        sim_ap.authmode = WIFI_AUTH_OPEN;
+        sim_ap.primary = 6;
+        cached_scan_results.push_back(sim_ap);
+        
+        append_text("Found 1 network (Virtual Target):\n #  SSID                 RSSI   CH  AUTH\n");
+        append_text(" 1  Wokwi-GUEST          -45    6   Open\n\n");
+        append_text("Type 'connect 1' or 'connect Wokwi-GUEST' to connect.\n");
+        return ESP_OK;
+    }
+    
     ensure_wifi_driver_started(this);
     
     append_text("Scanning 2.4 GHz WiFi networks...\n");
@@ -457,6 +490,22 @@ esp_err_t SSHTerminal::scan_wifi()
 
 void SSHTerminal::show_wifi_status()
 {
+    if (m_is_virtual_target) {
+        char status_buf[256];
+        snprintf(status_buf, sizeof(status_buf),
+                 "\n=== WiFi Status ===\n"
+                 " State:    %s\n"
+                 " SSID:     %s\n"
+                 " IP:       %s\n"
+                 " Mode:     Virtual ESP32-S3 Target (Emulated WiFi)\n"
+                 "===================\n\n",
+                 wifi_connected ? "Connected" : "Disconnected",
+                 connected_ssid.empty() ? "(none)" : connected_ssid.c_str(),
+                 wifi_connected ? "192.168.1.100" : "(none)");
+        append_text(status_buf);
+        return;
+    }
+    
     ensure_wifi_driver_started(this);
     
     append_text("\n=== WiFi Status ===\n");
@@ -723,6 +772,9 @@ void SSHTerminal::set_wifi_autoconnect_enabled(bool enabled)
 
 void SSHTerminal::try_autoconnect()
 {
+    if (m_is_virtual_target) {
+        return;
+    }
     ensure_wifi_driver_started(this);
     
     std::string saved_ssid, saved_pass;
@@ -1788,7 +1840,9 @@ void SSHTerminal::handle_key_input(char key)
                 if (wifi_connected) {
                     append_text("Disconnecting WiFi...\n");
                     s_retry_num = WIFI_MAXIMUM_RETRY;
-                    esp_wifi_disconnect();
+                    if (!m_is_virtual_target) {
+                        esp_wifi_disconnect();
+                    }
                     wifi_connected = false;
                     connected_ssid.clear();
                     update_status_bar();
