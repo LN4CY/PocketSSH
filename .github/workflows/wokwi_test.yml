@@ -17,14 +17,18 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Run Pre-Build Verification & Unit Tests
+        run: python3 tests/test_runner.py
+
       - name: Build Firmware with ESP-IDF
         uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: v5.2.2
+          esp_idf_version: v5.4
           target: esp32s3
           path: '.'
 
       - name: Run Wokwi Automated Integration Scenario
+        if: ${{ secrets.WOKWI_CLI_TOKEN != '' }}
         uses: wokwi/wokwi-ci-action@v1
         with:
           token: ${{ secrets.WOKWI_CLI_TOKEN }}
@@ -32,3 +36,8 @@ jobs:
           scenario: 'tests/wokwi_scenario.yaml'
           timeout: 35000
           fail_text: 'Guru Meditation Error'
+
+      - name: Notify Wokwi Token Status
+        if: ${{ secrets.WOKWI_CLI_TOKEN == '' }}
+        run: |
+          echo "::notice ::Wokwi simulation step skipped: WOKWI_CLI_TOKEN is not configured in repository secrets. To enable cloud Wokwi simulation tests in CI, add your token at https://github.com/${{ github.repository }}/settings/secrets/actions"
