@@ -90,6 +90,8 @@ public:
     const char* get_loaded_key(const char* keyname, size_t* len);
     std::vector<std::string> get_loaded_key_names();
     esp_err_t fetch_remote_key(const char* remote_path, const char* local_name = NULL);
+    void start_fetch_remote_key(const char* remote_path, const char* local_name = NULL);
+    void show_getkey_dialog();
     bool save_key_to_sd_and_nvs(const char* keyname, const char* key_data, size_t key_len);
     bool delete_key_from_sd_and_nvs(const char* keyname);
     void save_key_to_nvs(const char* keyname, const char* key_data);
@@ -111,6 +113,7 @@ public:
     void send_arrow_left();
     void send_arrow_right();
     void send_char_or_insert(char c);
+    void run_terminal_self_tests();
     
 private:
     lv_obj_t* terminal_screen;
@@ -196,6 +199,12 @@ private:
     static void history_save_cb(lv_timer_t* timer);
     static void ssh_receive_task(void* param);
     static void autoconnect_task(void* param);
+    static void fetch_key_task(void* param);
+    
+    volatile bool ssh_rx_paused;
+    volatile bool ssh_rx_is_paused;
+    lv_obj_t* getkey_dialog;
+    lv_obj_t* getkey_path_ta;
     
     static esp_err_t ensure_wifi_driver_started(SSHTerminal* terminal);
     
