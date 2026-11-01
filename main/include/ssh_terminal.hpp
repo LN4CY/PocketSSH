@@ -115,7 +115,6 @@ public:
     void send_arrow_left();
     void send_arrow_right();
     void send_char_or_insert(char c);
-    void run_terminal_self_tests();
     void toggle_local_shell_mode();
     bool is_local_shell_active() const { return is_local_mode_during_ssh; }
     

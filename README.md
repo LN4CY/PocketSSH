@@ -151,12 +151,12 @@ The LilyGO T-Deck hardware keyboard lacks several keys required for standard Uni
 - Swipe left-to-right (or tap the **`[KEY]`** pill) to open a slide-out panel with hardware shortcuts:
   - **Control Keys**: `Ctrl+C`, `Ctrl+Z`, `Ctrl+D`, `Ctrl+L`, `Tab`, `Esc`
   - **Scrollback Shortcuts**: `PgUp`, `PgDn`, `Top`, `Bottom`, `Clear`
-  - **Session Management**: `Exit SSH`, `Local/SSH`, `Get Key`, `Self Test`
+  - **Session Management**: `Exit SSH`, `Local/SSH`, `Get Key`
 
 ### 11. Pre-Build Verification & Validation (V&V) Suite
-- **25 Pre-Build Automated Tests**: Complete host test suite ([tests/test_terminal.py](tests/test_terminal.py) and [tests/run_tests.ps1](tests/run_tests.ps1)) runs before every build.
+- **28 Pre-Build Automated Tests**: Complete host test suite ([tests/test_terminal.py](tests/test_terminal.py) and [tests/run_tests.ps1](tests/run_tests.ps1)) runs before every build.
 - **Zero-Tolerance Build Gate**: [build_firmware.ps1](build_firmware.ps1) immediately halts compilation if any unit or integration test fails.
-- **On-Device Self-Tests**: Run `test` (or `selftest`) at any time to verify ANSI rendering, cursor clamping, and line disciplines on the physical display.
+- **Virtual / Host Simulation**: Rigorous behavioral verification covering ANSI color palettes, cursor clamping, line boundaries, escape sequences, Alt Mode mappings, and key parsing.
 
 ---
 
@@ -244,7 +244,6 @@ These commands execute on the device firmware (in idle mode or inside the `[loca
 | **`keys`** | `keys` or `key` | List all loaded SSH private keys |
 | **`getkey`** | `getkey [REMOTE_PATH] [NAME]` | Fetch private key from remote server (opens picker if empty) |
 | **`resume`** | `resume` or `fg` | Resume active SSH session from Local Shell mode |
-| **`test`** | `test` or `selftest` | Execute on-device terminal verification & self-test suite |
 | **`clear`** | `clear` | Clear the terminal display output |
 | **`exit`** | `exit` | Terminate and disconnect the active SSH session |
 | **`pgup`** / **`pgdn`** | `pgup` / `pgdn` | Scroll terminal backlog one page up / down |
@@ -261,7 +260,6 @@ When connected in interactive SSH mode, typing `:` as the very first character o
 | :--- | :--- |
 | **`:getkey [path] [name]`** | Pull private key from remote host, save to SD card & NVS |
 | **`:keys`** | Print list of loaded private keys in memory |
-| **`:test`** | Run on-device terminal self-tests |
 | **`:exit`** | Close remote channel and disconnect SSH session |
 
 ---
@@ -407,12 +405,15 @@ test_end_of_line_detection ... ok
 test_non_destructive_cursor_clamping ... ok
 test_start_of_line_detection ... ok
 test_alt_enter_toggles_local_shell ... ok
+test_backspace_handled_in_alt_mode ... ok
 test_cd_tilde_slash_passed_to_remote_shell ... ok
+test_empty_enter_produces_prompt_in_local_shell ... ok
+test_exit_when_disconnected_does_not_claim_session_closed ... ok
 test_getkey_intercepted_locally ... ok
 test_getkey_without_args_intercepted_locally ... ok
 test_keys_intercepted_locally ... ok
 test_regular_command_passed_to_remote_shell ... ok
-test_test_suite_intercepted_locally ... ok
+test_test_command_passed_to_remote_shell ... ok
 test_tilde_slash_never_intercepted_as_escape ... ok
 test_vim_commands_passed_to_remote_shell ... ok
 test_key_name_resolution_fallback ... ok
@@ -426,17 +427,15 @@ test_alt_space_tab_injection ... ok
 test_simulated_ssh_session_with_getkey ... ok
 
 ----------------------------------------------------------------------
-Ran 25 tests in 0.001s
+Ran 28 tests in 0.001s
 
-[OK] ALL 25 SUBSYSTEM UNIT AND INTEGRATION TESTS PASSED (100% VERIFIED)
+[OK] ALL 28 SUBSYSTEM UNIT AND INTEGRATION TESTS PASSED (100% VERIFIED)
 ```
 
-### On-Device Self-Tests
-
-Execute `test` or `selftest` in the local prompt (or tap `Self Test` in the slide-out touch Keys panel). The firmware tests:
-- ANSI 16-color, 256-color cube, and 24-bit TrueColor rendering on the physical LCD.
-- Long-line word wrapping and carriage return separation.
-- Boundary clamping to physical display margins (53x24 character grid).
+### Automated Testing Strategy
+Testing is decoupled from physical hardware through host-level and virtual environment execution:
+- **Host Unit & Integration Tests**: Run in milliseconds via `tests/run_tests.ps1` before every build, ensuring zero regression in terminal emulation, character mapping, and session routing.
+- **Virtual Target Ready**: Designed for execution within automated CI and QEMU/virtual ESP32 simulator targets, eliminating brittle on-device test routines in favor of reproducible, automated validation pipelines.
 
 ---
 

@@ -244,14 +244,14 @@ class TestKeyManagerAndFormatValidation(unittest.TestCase):
 
 
 class TestEscapeCommandStateMachine(unittest.TestCase):
-    """Verifies that :getkey, :keys, :test are captured locally and never sent to remote shell."""
+    """Verifies that :getkey, :keys, :exit are captured locally and :test passes to remote shell."""
 
     def simulate_key_entry(self, input_chars: str):
         """Simulates SSHTerminal's escape buffer logic."""
         buffer = ""
         flushed_to_remote = []
         local_command_executed = None
-        supported_cmds = ["getkey", "keys", "test", "selftest", "help", "exit", "quit", "clear"]
+        supported_cmds = ["getkey", "keys", "help", "exit", "quit", "clear"]
 
         for ch in input_chars:
             if ch in ('\r', '\n'):
@@ -302,10 +302,11 @@ class TestEscapeCommandStateMachine(unittest.TestCase):
         self.assertEqual(cmd, ":keys")
         self.assertEqual(remote, "")
 
-    def test_test_suite_intercepted_locally(self):
+    def test_test_command_passed_to_remote_shell(self):
+        # :test is no longer an escape command; it should pass directly to remote shell
         cmd, remote = self.simulate_key_entry(":test\r")
-        self.assertEqual(cmd, ":test")
-        self.assertEqual(remote, "")
+        self.assertIsNone(cmd)
+        self.assertEqual(remote, ":test\r")
 
     def test_vim_commands_passed_to_remote_shell(self):
         # In vim, typing :w followed by Enter should flush to remote!
