@@ -1,4 +1,10 @@
 dependencies:
+  esp_bsp_generic:
+    dependencies: []
+    source:
+      path: E:\proj\AiAssited\PocketSSH\components\esp_bsp_generic
+      type: local
+    version: 3.1.1
   espressif/button:
     component_hash: 26345e8700d3c6435925f9a8f246d224f9c1b99f937c243fe400844eec514b4a
     dependencies:
@@ -10,7 +16,7 @@ dependencies:
       require: private
       version: '>=4.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 4.2.3
   espressif/cmake_utilities:
@@ -23,56 +29,6 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 0.5.3
-  espressif/esp_bsp_generic:
-    component_hash: 8445d95cf246aae6afe83197cd84b9fbfe17ef443ffd0bab23a855508a6cf820
-    dependencies:
-    - name: espressif/button
-      registry_url: https://components.espressif.com
-      require: public
-      version: ^4
-    - name: espressif/esp_lcd_ili9341
-      registry_url: https://components.espressif.com
-      require: private
-      version: ^2.0.1
-    - name: espressif/esp_lcd_touch_cst816s
-      registry_url: https://components.espressif.com
-      require: private
-      version: ^1
-    - name: espressif/esp_lcd_touch_ft5x06
-      registry_url: https://components.espressif.com
-      require: private
-      version: ^1
-    - name: espressif/esp_lcd_touch_gt1151
-      registry_url: https://components.espressif.com
-      require: private
-      version: ^1
-    - name: espressif/esp_lcd_touch_gt911
-      registry_url: https://components.espressif.com
-      require: private
-      version: ^1
-    - name: espressif/esp_lcd_touch_tt21100
-      registry_url: https://components.espressif.com
-      require: private
-      version: ^1
-    - name: espressif/esp_lcd_gc9a01
-      registry_url: https://components.espressif.com
-      require: public
-      version: ^2
-    - name: espressif/esp_lvgl_port
-      registry_url: https://components.espressif.com
-      require: public
-      version: ^2
-    - name: idf
-      require: private
-      version: '>=5.2'
-    - name: espressif/led_indicator
-      registry_url: https://components.espressif.com
-      require: public
-      version: ~2.0
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 3.1.1
   espressif/esp_lcd_gc9a01:
     component_hash: e60bc2b5649c7679bd010797a875ae64b2a57cf9cdbd6a2bf7a0ade66913edc0
     dependencies:
@@ -84,7 +40,7 @@ dependencies:
       require: private
       version: '>=4.4'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 2.0.4
   espressif/esp_lcd_ili9341:
@@ -98,7 +54,7 @@ dependencies:
       require: private
       version: '>=5.2'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 2.1.0
   espressif/esp_lcd_touch:
@@ -122,7 +78,7 @@ dependencies:
       require: private
       version: '>=5.2'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.1.2
   espressif/esp_lcd_touch_ft5x06:
@@ -136,7 +92,7 @@ dependencies:
       require: private
       version: '>=5.2'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.1.1
   espressif/esp_lcd_touch_gt1151:
@@ -150,7 +106,7 @@ dependencies:
       require: private
       version: '>=5.2'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.1.1
   espressif/esp_lcd_touch_gt911:
@@ -178,7 +134,7 @@ dependencies:
       require: private
       version: '>=5.2'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.2.1
   espressif/esp_lvgl_port:
@@ -192,7 +148,7 @@ dependencies:
       require: public
       version: '>=8,<10'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 2.9.0
   espressif/led_indicator:
@@ -210,7 +166,7 @@ dependencies:
       require: public
       version: 3.*
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 2.0.2
   espressif/led_strip:
@@ -267,11 +223,20 @@ dependencies:
       type: service
     version: 1.1.0
 direct_dependencies:
+- espressif/button
 - espressif/esp_bsp_generic
+- espressif/esp_lcd_gc9a01
+- espressif/esp_lcd_ili9341
+- espressif/esp_lcd_touch_cst816s
+- espressif/esp_lcd_touch_ft5x06
+- espressif/esp_lcd_touch_gt1151
 - espressif/esp_lcd_touch_gt911
+- espressif/esp_lcd_touch_tt21100
+- espressif/esp_lvgl_port
+- espressif/led_indicator
 - idf
 - lvgl/lvgl
 - skuodi/libssh2_esp
-manifest_hash: eda40fb4a030822162fee96b72b27a13a5e9173eb974e398c5ffa93865203f81
+manifest_hash: 61433bd9df6a74bd35adcce6bac34892fa0be15c7ab1e6d402c223fe1058d60f
 target: esp32s3
 version: 2.0.0
