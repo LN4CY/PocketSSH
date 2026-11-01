@@ -25,7 +25,7 @@ jobs:
           python-version: '3.11'
 
       - name: Run Host Unit & Subsystem Tests
-        run: python tests/test_runner.py
+        run: python tests/test_terminal.py
 
       - name: Build Firmware with ESP-IDF
         uses: espressif/esp-idf-ci-action@v1
