@@ -58,8 +58,12 @@ SSHTerminal::SSHTerminal()
       scroll_indicator_label(NULL),
       ctrl_c_btn(NULL),
       esc_btn(NULL),
+      alt_btn(NULL),
+      alt_btn_lbl(NULL),
       keys_btn(NULL),
       activity_label(NULL),
+      alt_hud_panel(NULL),
+      alt_mode(false),
       is_user_scrolled_back(false),
       ssh_cmd_buffer(""),
       ssh_at_line_start(true),
@@ -802,10 +806,21 @@ void SSHTerminal::ctrl_c_btn_event_cb(lv_event_t* e)
     }
 }
 
+void SSHTerminal::alt_btn_event_cb(lv_event_t* e)
+{
+    SSHTerminal* terminal = (SSHTerminal*)lv_event_get_user_data(e);
+    if (terminal) {
+        terminal->toggle_alt_mode();
+    }
+}
+
 void SSHTerminal::esc_btn_event_cb(lv_event_t* e)
 {
     SSHTerminal* terminal = (SSHTerminal*)lv_event_get_user_data(e);
     if (terminal) {
+        if (terminal->alt_mode) {
+            terminal->set_alt_mode(false);
+        }
         if (terminal->ssh_connected && terminal->channel) {
             terminal->ssh_write_all("\x1B", 1);
             terminal->set_activity_status("[ESC]", 0x50FFFF);
@@ -845,6 +860,23 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
     lv_obj_set_style_text_color(activity_label, lv_color_hex(0x50FF50), 0);
     lv_obj_set_style_text_font(activity_label, &lv_font_montserrat_10, 0);
     lv_obj_align(activity_label, LV_ALIGN_TOP_LEFT, 68, 6);
+
+    // Dedicated [ALT] Mode toggle touch button (top right)
+    alt_btn = lv_btn_create(terminal_screen);
+    lv_obj_set_size(alt_btn, 30, 18);
+    lv_obj_align(alt_btn, LV_ALIGN_TOP_RIGHT, -142, 3);
+    lv_obj_set_style_bg_color(alt_btn, lv_color_hex(0x181824), 0);
+    lv_obj_set_style_bg_color(alt_btn, lv_color_hex(0x403000), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(alt_btn, lv_color_hex(0x5070AA), 0);
+    lv_obj_set_style_border_width(alt_btn, 1, 0);
+    lv_obj_set_style_radius(alt_btn, 3, 0);
+    lv_obj_set_style_pad_all(alt_btn, 0, 0);
+    alt_btn_lbl = lv_label_create(alt_btn);
+    lv_label_set_text(alt_btn_lbl, "ALT");
+    lv_obj_set_style_text_color(alt_btn_lbl, lv_color_hex(0x80B0FF), 0);
+    lv_obj_set_style_text_font(alt_btn_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(alt_btn_lbl);
+    lv_obj_add_event_cb(alt_btn, alt_btn_event_cb, LV_EVENT_CLICKED, this);
 
     // Dedicated [ESC] touch button (top right)
     esc_btn = lv_btn_create(terminal_screen);
@@ -963,6 +995,37 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
         SSHTerminal* term = (SSHTerminal*)lv_event_get_user_data(e);
         if (term) term->scroll_to_bottom();
     }, LV_EVENT_CLICKED, this);
+
+    // Floating HUD hint panel for Alt mode
+    alt_hud_panel = lv_obj_create(terminal_screen);
+    lv_obj_set_size(alt_hud_panel, 312, 54);
+    lv_obj_align(alt_hud_panel, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_set_style_bg_color(alt_hud_panel, lv_color_hex(0x061406), 0);
+    lv_obj_set_style_bg_opa(alt_hud_panel, LV_OPA_90, 0);
+    lv_obj_set_style_border_color(alt_hud_panel, lv_color_hex(0xDD9900), 0);
+    lv_obj_set_style_border_width(alt_hud_panel, 1, 0);
+    lv_obj_set_style_radius(alt_hud_panel, 4, 0);
+    lv_obj_set_style_pad_all(alt_hud_panel, 4, 0);
+    lv_obj_clear_flag(alt_hud_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(alt_hud_panel, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* hud_l1 = lv_label_create(alt_hud_panel);
+    lv_label_set_text(hud_l1, "[ALT ON] Trackball:Arrows | Space:Tab | c:^C z:^Z d:^D");
+    lv_obj_set_style_text_color(hud_l1, lv_color_hex(0xFFCC00), 0);
+    lv_obj_set_style_text_font(hud_l1, &lv_font_montserrat_10, 0);
+    lv_obj_align(hud_l1, LV_ALIGN_TOP_LEFT, 2, 0);
+
+    lv_obj_t* hud_l2 = lv_label_create(alt_hud_panel);
+    lv_label_set_text(hud_l2, "Symbols: t:~  p:|  b:\\  e:=  u:[  i:]  o:{  j:}");
+    lv_obj_set_style_text_color(hud_l2, lv_color_hex(0x50FF50), 0);
+    lv_obj_set_style_text_font(hud_l2, &lv_font_montserrat_10, 0);
+    lv_obj_align(hud_l2, LV_ALIGN_TOP_LEFT, 2, 16);
+
+    lv_obj_t* hud_l3 = lv_label_create(alt_hud_panel);
+    lv_label_set_text(hud_l3, "More:    k:<  m:>  q:`  s:$  g:^  n:&  a:^A  x:^X  r:^R");
+    lv_obj_set_style_text_color(hud_l3, lv_color_hex(0x70D0FF), 0);
+    lv_obj_set_style_text_font(hud_l3, &lv_font_montserrat_10, 0);
+    lv_obj_align(hud_l3, LV_ALIGN_TOP_LEFT, 2, 32);
     lv_obj_add_flag(scroll_indicator_label, LV_OBJ_FLAG_HIDDEN);
 
     input_container = lv_obj_create(terminal_screen);
@@ -1127,6 +1190,120 @@ void SSHTerminal::handle_key_input(char key)
     if ((uint8_t)key == 0x0C || (uint8_t)key == 0x03) {
         send_interrupt();
         return;
+    }
+
+    // Physical Alt key code from keyboard coprocessor (if emitted)
+    if ((uint8_t)key == 0x82 || (uint8_t)key == 0x11 || (uint8_t)key == 0x12) {
+        toggle_alt_mode();
+        return;
+    }
+
+    // ========================================================
+    // ALT MODE ACTIVE KEY DISPATCH
+    // ========================================================
+    if (alt_mode) {
+        // Space -> Tab
+        if (key == ' ') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\t", 1);
+            } else {
+                handle_tab_completion();
+            }
+            return;
+        }
+
+        // Missing Symbols
+        if (key == 't' || key == 'T') { send_char_or_insert('~'); return; }
+        if (key == 'p' || key == 'P') { send_char_or_insert('|'); return; }
+        if (key == 'b' || key == 'B') { send_char_or_insert('\\'); return; }
+        if (key == 'e' || key == 'E') { send_char_or_insert('='); return; }
+        if (key == 'u' || key == 'U') { send_char_or_insert('['); return; }
+        if (key == 'i' || key == 'I') { send_char_or_insert(']'); return; }
+        if (key == 'o' || key == 'O') { send_char_or_insert('{'); return; }
+        if (key == 'j' || key == 'J') { send_char_or_insert('}'); return; }
+        if (key == 'k' || key == 'K') { send_char_or_insert('<'); return; }
+        if (key == 'm' || key == 'M') { send_char_or_insert('>'); return; }
+        if (key == 'q' || key == 'Q') { send_char_or_insert('`'); return; }
+        if (key == 's' || key == 'S') { send_char_or_insert('$'); return; }
+        if (key == 'g' || key == 'G') { send_char_or_insert('^'); return; }
+        if (key == 'n' || key == 'N') { send_char_or_insert('&'); return; }
+
+        // Control Keys (for SSH)
+        if (key == 'c' || key == 'C') { send_interrupt(); return; }
+        if (key == 'z' || key == 'Z') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\x1A", 1);
+                set_activity_status("[^Z SENT]", 0xFFFF50);
+            }
+            return;
+        }
+        if (key == 'd' || key == 'D') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\x04", 1);
+                set_activity_status("[^D SENT]", 0xFFFF50);
+            }
+            return;
+        }
+        if (key == 'l' || key == 'L') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\x0C", 1);
+            } else {
+                clear_terminal();
+            }
+            return;
+        }
+        if (key == 'a' || key == 'A') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\x01", 1);
+            }
+            return;
+        }
+        if (key == 'r' || key == 'R') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\x12", 1);
+            }
+            return;
+        }
+        if (key == 'x' || key == 'X') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\x18", 1);
+            }
+            return;
+        }
+        if (key == 'w' || key == 'W') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\x17", 1);
+            }
+            return;
+        }
+        if (key == 'f' || key == 'F') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\x06", 1);
+            }
+            return;
+        }
+        if (key == 'v' || key == 'V') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\x16", 1);
+            }
+            return;
+        }
+        if (key == 'y' || key == 'Y') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\x19", 1);
+            }
+            return;
+        }
+        if (key == 'h' || key == 'H') {
+            if (ssh_connected && channel) {
+                ssh_write_all("\x08", 1);
+            }
+            return;
+        }
+        if (key == 27) {
+            set_alt_mode(false);
+            return;
+        }
     }
 
     // ========================================================
@@ -3796,6 +3973,94 @@ bool SSHTerminal::delete_key_from_nvs(const char* keyname)
     nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
     return true;
+}
+
+void SSHTerminal::toggle_alt_mode()
+{
+    set_alt_mode(!alt_mode);
+}
+
+void SSHTerminal::set_alt_mode(bool enable)
+{
+    alt_mode = enable;
+    if (bsp_display_lock(pdMS_TO_TICKS(100))) {
+        if (alt_mode) {
+            if (alt_btn) {
+                lv_obj_set_style_bg_color(alt_btn, lv_color_hex(0x403000), 0);
+                lv_obj_set_style_border_color(alt_btn, lv_color_hex(0xFFCC00), 0);
+            }
+            if (alt_btn_lbl) {
+                lv_label_set_text(alt_btn_lbl, "ALT");
+                lv_obj_set_style_text_color(alt_btn_lbl, lv_color_hex(0xFFFF00), 0);
+            }
+            if (alt_hud_panel) {
+                lv_obj_clear_flag(alt_hud_panel, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_move_foreground(alt_hud_panel);
+            }
+        } else {
+            if (alt_btn) {
+                lv_obj_set_style_bg_color(alt_btn, lv_color_hex(0x181824), 0);
+                lv_obj_set_style_border_color(alt_btn, lv_color_hex(0x5070AA), 0);
+            }
+            if (alt_btn_lbl) {
+                lv_label_set_text(alt_btn_lbl, "ALT");
+                lv_obj_set_style_text_color(alt_btn_lbl, lv_color_hex(0x80B0FF), 0);
+            }
+            if (alt_hud_panel) {
+                lv_obj_add_flag(alt_hud_panel, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        bsp_display_unlock();
+    }
+    ESP_LOGI(TAG, "Alt Mode: %s", alt_mode ? "ON" : "OFF");
+}
+
+void SSHTerminal::send_arrow_up()
+{
+    if (ssh_connected && channel) {
+        ssh_write_all("\033[A", 3);
+    } else {
+        navigate_history(1);
+    }
+}
+
+void SSHTerminal::send_arrow_down()
+{
+    if (ssh_connected && channel) {
+        ssh_write_all("\033[B", 3);
+    } else {
+        navigate_history(-1);
+    }
+}
+
+void SSHTerminal::send_arrow_left()
+{
+    if (ssh_connected && channel) {
+        ssh_write_all("\033[D", 3);
+    } else {
+        move_cursor_left();
+    }
+}
+
+void SSHTerminal::send_arrow_right()
+{
+    if (ssh_connected && channel) {
+        ssh_write_all("\033[C", 3);
+    } else {
+        move_cursor_right();
+    }
+}
+
+void SSHTerminal::send_char_or_insert(char c)
+{
+    char buf[2] = { c, '\0' };
+    if (ssh_connected && channel) {
+        ssh_write_all(buf, 1);
+    } else {
+        current_input.insert(cursor_pos, 1, c);
+        cursor_pos++;
+        update_input_display();
+    }
 }
 
 void SSHTerminal::show_loaded_keys()

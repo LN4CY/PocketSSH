@@ -102,6 +102,16 @@ public:
     void set_activity_status(const char* text, uint32_t color_hex);
     ssize_t ssh_write_all(const char* data, size_t len);
     
+    // Alt Mode & Trackball Arrow Navigation
+    bool is_alt_mode() const { return alt_mode; }
+    void toggle_alt_mode();
+    void set_alt_mode(bool enable);
+    void send_arrow_up();
+    void send_arrow_down();
+    void send_arrow_left();
+    void send_arrow_right();
+    void send_char_or_insert(char c);
+    
 private:
     lv_obj_t* terminal_screen;
     lv_obj_t* terminal_output;
@@ -113,10 +123,15 @@ private:
     lv_obj_t* scroll_indicator_label;
     lv_obj_t* ctrl_c_btn;
     lv_obj_t* esc_btn;
+    lv_obj_t* alt_btn;
+    lv_obj_t* alt_btn_lbl;
     lv_obj_t* keys_btn;
     lv_obj_t* activity_label;
+    lv_obj_t* alt_hud_panel;
+    bool alt_mode;
     static void ctrl_c_btn_event_cb(lv_event_t* e);
     static void esc_btn_event_cb(lv_event_t* e);
+    static void alt_btn_event_cb(lv_event_t* e);
     static void keys_btn_event_cb(lv_event_t* e);
     bool is_user_scrolled_back;
     void update_scroll_indicator();

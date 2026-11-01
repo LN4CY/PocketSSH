@@ -40,11 +40,39 @@ A portable SSH terminal client for the ESP32-S3 T-Deck Plus, featuring a hardwar
 - **Added**: Real-Time SSH Activity Indicator & Stream Batching
   - Continuous status indication: displays `[WAIT...]` on command submission, live rotating spinner `[ / ]` `[ - ]` `[ \ ]` `[ | ]` during incoming byte streams, and `[ONLINE]` when idle.
   - High-speed output chunk batching: flushes text in 256-byte chunks, reducing display lock contention by 1000x and completely eliminating device hangs during large command outputs.
-- **Added**: Multi-Mode Interrupt & Control Capabilities
-  - Physical keyboard **`Alt + C`**: The T-Deck keyboard co-processor's native `Alt + C` combination (sending `0x0C`) directly triggers `Ctrl+C` (`\x03` / SIGINT) to immediately abort remote commands.
-  - Dedicated on-screen **`[^C]`** touch button in the top bar for immediate command abort (SIGINT).
-  - Dedicated on-screen **`[ESC]`** touch button in the top bar to send `\x1B` (Escape) immediately to vim, nano, or htop.
-  - Dedicated on-screen **`[KEY]`** touch button in the top bar to toggle the special keys drawer with one tap.
+- **Added**: Dynamic Alt Mode, Trackball Arrow Navigation & Missing Symbols
+  - **Alt Mode Toggle**: Toggle on/off by clicking the hardware trackball (short click) or tapping the top-bar **`[ALT]`** button.
+  - **Dual-Behavior Trackball**:
+    - **Normal Mode**: Trackball rolls scroll terminal history up/down.
+    - **Alt Mode**: Trackball rolls send ANSI arrow keys (`Up`, `Down`, `Left`, `Right` / `\033[A`, `\033[B`, `\033[D`, `\033[C`) to navigate command history and remote cursor in vim, nano, and bash.
+  - **On-Screen Alt HUD Hint**: A sleek floating HUD banner appears whenever Alt Mode is active, showing all available key shortcuts directly on screen.
+  - **Tab Key**: Press **`Space`** in Alt Mode (or `Alt + Space`) to send `Tab` (`\t`) for remote bash/zsh auto-completion.
+  - **Missing Symbols (Alt Mode)**:
+    - **`t`** / **`T`** $\rightarrow$ **`~`** (Tilde - essential for `~/`)
+    - **`p`** / **`P`** $\rightarrow$ **`|`** (Pipe - essential for shell pipelines)
+    - **`b`** / **`B`** $\rightarrow$ **`\`** (Backslash)
+    - **`e`** / **`E`** $\rightarrow$ **`=`** (Equals)
+    - **`u`** / **`U`** $\rightarrow$ **`[`** (Left square bracket)
+    - **`i`** / **`I`** $\rightarrow$ **`]`** (Right square bracket)
+    - **`o`** / **`O`** $\rightarrow$ **`{`** (Left curly brace)
+    - **`j`** / **`J`** $\rightarrow$ **`}`** (Right curly brace)
+    - **`k`** / **`K`** $\rightarrow$ **`<`** (Less than)
+    - **`m`** / **`M`** $\rightarrow$ **`>`** (Greater than)
+    - **`q`** / **`Q`** $\rightarrow$ **``` ` ```** (Backtick)
+    - **`s`** / **`S`** $\rightarrow$ **`$`** (Dollar sign)
+    - **`g`** / **`G`** $\rightarrow$ **`^`** (Caret)
+    - **`n`** / **`N`** $\rightarrow$ **`&`** (Ampersand)
+  - **Control Keys (Alt Mode)**:
+    - **`c`** $\rightarrow$ `Ctrl+C` (SIGINT)
+    - **`z`** $\rightarrow$ `Ctrl+Z` (SIGTSTP)
+    - **`d`** $\rightarrow$ `Ctrl+D` (EOF / Logout)
+    - **`l`** $\rightarrow$ `Ctrl+L` (Clear screen)
+    - **`a`** $\rightarrow$ `Ctrl+A` (Home / Beginning of line)
+    - **`r`** $\rightarrow$ `Ctrl+R` (Reverse history search)
+    - **`x`** $\rightarrow$ `Ctrl+X` (Exit nano)
+    - **`w`** $\rightarrow$ `Ctrl+W` (Delete word)
+  - Physical keyboard **`Alt + C`**: Always triggers `Ctrl+C` (`\x03` / SIGINT) immediately.
+  - Dedicated on-screen **`[ALT]`**, **`[ESC]`**, **`[^C]`**, and **`[KEY]`** touch buttons in the top bar.
   - Hardware trackball long-press (>400 ms) sends `Ctrl+C` (`\x03`) immediately in SSH mode.
 - **Added**: Interactive Desktop SSH Experience
   - Full-screen terminal experience: Automatically collapses local input bar upon connection and expands output to 53x24 character grid.

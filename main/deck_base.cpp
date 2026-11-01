@@ -304,31 +304,47 @@ void trackball_task(void *param)
         bool right = gpio_get_level(BOARD_TBOX_G02);
         bool press = gpio_get_level(BOARD_BOOT_PIN);
         
-        // Detect falling edge on Up (roller scrolled up) -> Scroll Terminal Up
+        // Detect falling edge on Up
         if (!up && last_up) {
             if (ssh_terminal) {
-                ssh_terminal->scroll_up(28);
+                if (ssh_terminal->is_alt_mode()) {
+                    ssh_terminal->send_arrow_up();
+                } else {
+                    ssh_terminal->scroll_up(28);
+                }
             }
         }
         
-        // Detect falling edge on Down (roller scrolled down) -> Scroll Terminal Down
+        // Detect falling edge on Down
         if (!down && last_down) {
             if (ssh_terminal) {
-                ssh_terminal->scroll_down(28);
+                if (ssh_terminal->is_alt_mode()) {
+                    ssh_terminal->send_arrow_down();
+                } else {
+                    ssh_terminal->scroll_down(28);
+                }
             }
         }
 
-        // Detect falling edge on Left (roller scrolled left) -> History older or move cursor left
+        // Detect falling edge on Left
         if (!left && last_left) {
             if (ssh_terminal) {
-                ssh_terminal->handle_trackball_left();
+                if (ssh_terminal->is_alt_mode()) {
+                    ssh_terminal->send_arrow_left();
+                } else {
+                    ssh_terminal->handle_trackball_left();
+                }
             }
         }
 
-        // Detect falling edge on Right (roller scrolled right) -> History newer or move cursor right
+        // Detect falling edge on Right
         if (!right && last_right) {
             if (ssh_terminal) {
-                ssh_terminal->handle_trackball_right();
+                if (ssh_terminal->is_alt_mode()) {
+                    ssh_terminal->send_arrow_right();
+                } else {
+                    ssh_terminal->handle_trackball_right();
+                }
             }
         }
         
@@ -363,8 +379,8 @@ void trackball_task(void *param)
                         ESP_LOGI("TRACKBALL", "Short press: returning to bottom");
                         ssh_terminal->scroll_to_bottom();
                     } else {
-                        ESP_LOGI("TRACKBALL", "Short press: executing current input");
-                        ssh_terminal->handle_key_input('\n');
+                        ESP_LOGI("TRACKBALL", "Short press: toggling Alt Mode");
+                        ssh_terminal->toggle_alt_mode();
                     }
                 }
             }
