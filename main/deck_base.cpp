@@ -373,13 +373,14 @@ void trackball_task(void *param)
                     }
                 } else {
                     // Short press:
-                    // If terminal is scrolled back, snap immediately back to bottom!
-                    // If already at bottom, execute current input (like Enter key)
-                    if (ssh_terminal->is_scrolled_back()) {
+                    if (ssh_terminal->is_alt_mode()) {
+                        ESP_LOGI("TRACKBALL", "Short press in Alt Mode: toggling Alt Mode OFF");
+                        ssh_terminal->set_alt_mode(false);
+                    } else if (ssh_terminal->is_scrolled_back()) {
                         ESP_LOGI("TRACKBALL", "Short press: returning to bottom");
                         ssh_terminal->scroll_to_bottom();
                     } else {
-                        ESP_LOGI("TRACKBALL", "Short press: toggling Alt Mode");
+                        ESP_LOGI("TRACKBALL", "Short press: toggling Alt Mode ON");
                         ssh_terminal->toggle_alt_mode();
                     }
                 }

@@ -1012,21 +1012,26 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
     lv_obj_set_style_pad_all(alt_hud_panel, 4, 0);
     lv_obj_clear_flag(alt_hud_panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(alt_hud_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(alt_hud_panel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(alt_hud_panel, [](lv_event_t* e) {
+        SSHTerminal* term = (SSHTerminal*)lv_event_get_user_data(e);
+        if (term) term->set_alt_mode(false);
+    }, LV_EVENT_CLICKED, this);
 
     lv_obj_t* hud_l1 = lv_label_create(alt_hud_panel);
-    lv_label_set_text(hud_l1, "[ALT ON] Trackball:Arrows | Space:Tab | c:^C z:^Z d:^D");
+    lv_label_set_text(hud_l1, "[ALT ON] Trackball:Arrows | Space:Tab | Tap to exit");
     lv_obj_set_style_text_color(hud_l1, lv_color_hex(0xFFCC00), 0);
     lv_obj_set_style_text_font(hud_l1, &lv_font_montserrat_10, 0);
     lv_obj_align(hud_l1, LV_ALIGN_TOP_LEFT, 2, 0);
 
     lv_obj_t* hud_l2 = lv_label_create(alt_hud_panel);
-    lv_label_set_text(hud_l2, "Symbols: t:~  p:|  b:\\  e:=  u:[  i:]  o:{  j:}");
+    lv_label_set_text(hud_l2, "Symbols: t:~  p:|  b:\\  e:=  u:[  i:]  o:{  j:}  v:%");
     lv_obj_set_style_text_color(hud_l2, lv_color_hex(0x50FF50), 0);
     lv_obj_set_style_text_font(hud_l2, &lv_font_montserrat_10, 0);
     lv_obj_align(hud_l2, LV_ALIGN_TOP_LEFT, 2, 16);
 
     lv_obj_t* hud_l3 = lv_label_create(alt_hud_panel);
-    lv_label_set_text(hud_l3, "More:    k:<  m:>  q:`  s:$  g:^  n:&  a:^A  x:^X  r:^R");
+    lv_label_set_text(hud_l3, "More:    k:<  m:>  q:`  s:$  g:^  n:&  c:^C  z:^Z  d:^D");
     lv_obj_set_style_text_color(hud_l3, lv_color_hex(0x70D0FF), 0);
     lv_obj_set_style_text_font(hud_l3, &lv_font_montserrat_10, 0);
     lv_obj_align(hud_l3, LV_ALIGN_TOP_LEFT, 2, 32);
@@ -1196,8 +1201,11 @@ void SSHTerminal::handle_key_input(char key)
         return;
     }
 
-    // Physical Alt key code from keyboard coprocessor (if emitted)
-    if ((uint8_t)key == 0x82 || (uint8_t)key == 0x11 || (uint8_t)key == 0x12) {
+    // Physical Alt/Sym key codes from T-Deck keyboard coprocessor
+    if ((uint8_t)key == 0x80 || (uint8_t)key == 0x81 || (uint8_t)key == 0x82 || 
+        (uint8_t)key == 0x83 || (uint8_t)key == 0x84 || (uint8_t)key == 0x11 || 
+        (uint8_t)key == 0x12 || (uint8_t)key == 0x13 || (uint8_t)key == 0x14 ||
+        (uint8_t)key == 0xA4 || (uint8_t)key == 0xA5) {
         toggle_alt_mode();
         return;
     }
@@ -1225,12 +1233,14 @@ void SSHTerminal::handle_key_input(char key)
         if (key == 'i' || key == 'I') { send_char_or_insert(']'); return; }
         if (key == 'o' || key == 'O') { send_char_or_insert('{'); return; }
         if (key == 'j' || key == 'J') { send_char_or_insert('}'); return; }
-        if (key == 'k' || key == 'K') { send_char_or_insert('<'); return; }
-        if (key == 'm' || key == 'M') { send_char_or_insert('>'); return; }
+        if (key == 'k' || key == 'K' || key == ',') { send_char_or_insert('<'); return; }
+        if (key == 'm' || key == 'M' || key == '.') { send_char_or_insert('>'); return; }
+        if (key == 'v' || key == 'V' || key == '5') { send_char_or_insert('%'); return; }
         if (key == 'q' || key == 'Q') { send_char_or_insert('`'); return; }
-        if (key == 's' || key == 'S') { send_char_or_insert('$'); return; }
-        if (key == 'g' || key == 'G') { send_char_or_insert('^'); return; }
-        if (key == 'n' || key == 'N') { send_char_or_insert('&'); return; }
+        if (key == 's' || key == 'S' || key == '4') { send_char_or_insert('$'); return; }
+        if (key == 'g' || key == 'G' || key == '6') { send_char_or_insert('^'); return; }
+        if (key == 'n' || key == 'N' || key == '7') { send_char_or_insert('&'); return; }
+        if (key == '0') { send_char_or_insert('0'); return; }
 
         // Control Keys (for SSH)
         if (key == 'c' || key == 'C') { send_interrupt(); return; }
@@ -1283,12 +1293,6 @@ void SSHTerminal::handle_key_input(char key)
         if (key == 'f' || key == 'F') {
             if (ssh_connected && channel) {
                 ssh_write_all("\x06", 1);
-            }
-            return;
-        }
-        if (key == 'v' || key == 'V') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\x16", 1);
             }
             return;
         }
@@ -3615,13 +3619,24 @@ void SSHTerminal::create_side_panel()
     create_key_button("Ctrl+D", "\x04", 280);
     create_key_button("Ctrl+L", "\x0C", 315);
     create_key_button("Esc", "\x1B", 350);
-    create_key_button("PgUp", "PGUP", 385);
-    create_key_button("PgDn", "PGDN", 420);
-    create_key_button("Top", "TOP", 455);
-    create_key_button("Bottom", "BOTTOM", 490);
-    create_key_button("Exit SSH", "EXIT", 525);
-    create_key_button("Clear", "CLEAR", 560);
-    create_key_button("Get Key", "GETKEY", 605);
+    create_key_button("~ (Tilde)", "~", 385);
+    create_key_button("| (Pipe)", "|", 420);
+    create_key_button("\\ (Bslash)", "\\", 455);
+    create_key_button("< (Less)", "<", 490);
+    create_key_button("> (Great)", ">", 525);
+    create_key_button("{ (LBrace)", "{", 560);
+    create_key_button("} (RBrace)", "}", 595);
+    create_key_button("[ (LBrack)", "[", 630);
+    create_key_button("] (RBrack)", "]", 665);
+    create_key_button("% (Percent)", "%", 700);
+    create_key_button("= (Equals)", "=", 735);
+    create_key_button("PgUp", "PGUP", 770);
+    create_key_button("PgDn", "PGDN", 805);
+    create_key_button("Top", "TOP", 840);
+    create_key_button("Bottom", "BOTTOM", 875);
+    create_key_button("Exit SSH", "EXIT", 910);
+    create_key_button("Clear", "CLEAR", 945);
+    create_key_button("Get Key", "GETKEY", 980);
 }
 
 void SSHTerminal::toggle_side_panel()
@@ -3755,7 +3770,10 @@ void SSHTerminal::send_special_key(const char* sequence)
         libssh2_channel_write(channel, sequence, strlen(sequence));
         ESP_LOGI(TAG, "Sent special key sequence");
     } else {
-        ESP_LOGW(TAG, "Cannot send special key - not connected");
+        for (size_t s = 0; sequence[s]; s++) {
+            current_input.insert(cursor_pos++, 1, sequence[s]);
+        }
+        update_input_display();
     }
     
     toggle_side_panel();
