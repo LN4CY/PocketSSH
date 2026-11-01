@@ -1,0 +1,53 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug (Wokwi Simulator)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/PocketSSH.elf",
+      "miDebuggerPath": "E:/proj/sdk/.espressif/tools/xtensa-esp-elf-gdb/14.2_20240403/xtensa-esp-elf-gdb/bin/xtensa-esp32s3-elf-gdb.exe",
+      "miDebuggerServerAddress": "localhost:3333",
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "setupCommands": [
+        {
+          "text": "target remote localhost:3333"
+        },
+        {
+          "text": "set remote hardware-watchpoint-limit 2"
+        },
+        {
+          "text": "flushregs"
+        },
+        {
+          "text": "thbreak app_main"
+        },
+        {
+          "text": "c"
+        }
+      ]
+    },
+    {
+      "name": "Debug (QEMU GDB)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/PocketSSH.elf",
+      "miDebuggerPath": "E:/proj/sdk/.espressif/tools/xtensa-esp-elf-gdb/14.2_20240403/xtensa-esp-elf-gdb/bin/xtensa-esp32s3-elf-gdb.exe",
+      "miDebuggerServerAddress": "localhost:1234",
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "setupCommands": [
+        {
+          "text": "target remote localhost:1234"
+        },
+        {
+          "text": "thbreak app_main"
+        },
+        {
+          "text": "c"
+        }
+      ]
+    }
+  ]
+}
