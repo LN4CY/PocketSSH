@@ -943,6 +943,10 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
     lv_obj_set_style_text_font(terminal_output, &lv_font_montserrat_10, 0);
     lv_obj_set_style_border_color(terminal_output, lv_color_hex(0x00FF00), 0);
     lv_obj_set_style_border_width(terminal_output, 2, 0);
+    lv_obj_set_style_pad_left(terminal_output, 3, 0);
+    lv_obj_set_style_pad_right(terminal_output, 3, 0);
+    lv_obj_set_style_pad_top(terminal_output, 2, 0);
+    lv_obj_set_style_pad_bottom(terminal_output, 2, 0);
     lv_textarea_set_cursor_click_pos(terminal_output, false);
     lv_textarea_set_one_line(terminal_output, false);
     
@@ -2510,7 +2514,7 @@ esp_err_t SSHTerminal::ssh_open_channel()
     };
     while ((rc = libssh2_channel_request_pty_ex(channel, term_type, (unsigned int)strlen(term_type),
                                                 pty_modes, sizeof(pty_modes),
-                                                53, 24, 320, 240)) == LIBSSH2_ERROR_EAGAIN) {
+                                                50, 24, 320, 240)) == LIBSSH2_ERROR_EAGAIN) {
         waitsocket(ssh_socket, session);
     }
     
@@ -2717,6 +2721,7 @@ static uint32_t ansi_256_to_rgb(int index)
 
 static bool s_color_tag_open = false;
 static uint32_t s_current_fg_rgb = 0x00FF00;
+static int32_t s_saved_cursor_pos = 0;
 
 // Multi-byte UTF-8 stream buffer
 static uint8_t s_utf8_buf[4];
@@ -2928,26 +2933,6 @@ static void output_badge_or_symbol(lv_obj_t* ta, const char* rep)
     }
 }
 
-void SSHTerminal::erase_current_line()
-{
-    if (!terminal_output) return;
-    const char* txt = lv_textarea_get_text(terminal_output);
-    if (!txt || txt[0] == '\0') return;
-    
-    const char* last_nl = strrchr(txt, '\n');
-    if (last_nl != nullptr) {
-        size_t keep_len = (last_nl - txt) + 1;
-        std::string kept(txt, keep_len);
-        lv_textarea_set_text(terminal_output, kept.c_str());
-    } else {
-        lv_textarea_set_text(terminal_output, "");
-    }
-    s_color_tag_open = false;
-    s_utf8_len = 0;
-    s_utf8_expected = 0;
-    lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);
-}
-
 void SSHTerminal::erase_to_end_of_line()
 {
     if (!terminal_output) return;
@@ -2959,17 +2944,62 @@ void SSHTerminal::erase_to_end_of_line()
     if (cpos < 0) cpos = 0;
     if (cpos >= (int32_t)txt_len) return;
 
-    const char* nl = strchr(txt + cpos, '\n');
-    std::string kept(txt, cpos);
-    if (nl != nullptr) {
-        kept.append(nl);
+    // Determine the end of the current visual line or newline
+    lv_obj_t* ta_lbl = lv_textarea_get_label(terminal_output);
+    int32_t eol_pos = (int32_t)txt_len;
+
+    const char* next_nl = strchr(txt + cpos, '\n');
+    if (next_nl != nullptr) {
+        eol_pos = (int32_t)(next_nl - txt);
     }
 
+    if (ta_lbl) {
+        lv_point_t pt;
+        lv_label_get_letter_pos(ta_lbl, cpos, &pt);
+        const lv_font_t* font = lv_obj_get_style_text_font(ta_lbl, LV_PART_MAIN);
+        int32_t font_h = font ? lv_font_get_line_height(font) : 12;
+        int32_t line_space = lv_obj_get_style_text_line_space(ta_lbl, LV_PART_MAIN);
+        pt.y += font_h + line_space + 1;
+        pt.x = 0;
+        if (pt.y < lv_obj_get_height(ta_lbl)) {
+            uint32_t next_line_start = lv_label_get_letter_on(ta_lbl, &pt, true);
+            if ((int32_t)next_line_start > cpos && (int32_t)next_line_start < eol_pos) {
+                eol_pos = (int32_t)next_line_start;
+            }
+        }
+    }
+
+    std::string kept(txt, cpos);
+    kept.append(txt + eol_pos);
     lv_textarea_set_text(terminal_output, kept.c_str());
     lv_textarea_set_cursor_pos(terminal_output, cpos);
     s_color_tag_open = false;
     s_utf8_len = 0;
     s_utf8_expected = 0;
+}
+
+void SSHTerminal::erase_current_line()
+{
+    if (!terminal_output) return;
+    const char* txt = lv_textarea_get_text(terminal_output);
+    if (!txt || txt[0] == '\0') return;
+    
+    // Find start of current visual line
+    int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+    int32_t sol = 0;
+    lv_obj_t* ta_lbl = lv_textarea_get_label(terminal_output);
+    if (ta_lbl) {
+        lv_point_t pt;
+        lv_label_get_letter_pos(ta_lbl, cpos, &pt);
+        pt.x = 0;
+        sol = (int32_t)lv_label_get_letter_on(ta_lbl, &pt, true);
+    } else {
+        std::string before(txt, cpos);
+        size_t last_nl = before.rfind('\n');
+        sol = (last_nl != std::string::npos) ? (int32_t)(last_nl + 1) : 0;
+    }
+    lv_textarea_set_cursor_pos(terminal_output, sol);
+    erase_to_end_of_line();
 }
 
 std::string SSHTerminal::strip_ansi_codes(const char* data, size_t len)
@@ -3006,6 +3036,22 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
             flush_batch();
             if (pending_cr) {
                 pending_cr = false;
+            }
+            if (i + 1 < len && data[i + 1] == 'M') {
+                // Reverse Index (RI) -> cursor UP
+                i++;
+                lv_textarea_cursor_up(terminal_output);
+                continue;
+            } else if (i + 1 < len && data[i + 1] == '7') {
+                // Save Cursor (DECSC)
+                i++;
+                s_saved_cursor_pos = lv_textarea_get_cursor_pos(terminal_output);
+                continue;
+            } else if (i + 1 < len && data[i + 1] == '8') {
+                // Restore Cursor (DECRC)
+                i++;
+                lv_textarea_set_cursor_pos(terminal_output, s_saved_cursor_pos);
+                continue;
             }
             if (i + 1 < len && data[i + 1] == '[') {
                 i += 2;
@@ -3114,6 +3160,108 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                                 ci += 4;
                             }
                         }
+                    } else if (cmd == 'A') {
+                        // Cursor Up
+                        int count = 1;
+                        if (!params.empty()) count = atoi(params.c_str());
+                        if (count < 1) count = 1;
+                        for (int k = 0; k < count; k++) {
+                            lv_textarea_cursor_up(terminal_output);
+                        }
+                    } else if (cmd == 'B') {
+                        // Cursor Down
+                        int count = 1;
+                        if (!params.empty()) count = atoi(params.c_str());
+                        if (count < 1) count = 1;
+                        for (int k = 0; k < count; k++) {
+                            lv_textarea_cursor_down(terminal_output);
+                        }
+                    } else if (cmd == 'C') {
+                        // Cursor right
+                        int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+                        int count = 1;
+                        if (!params.empty()) count = atoi(params.c_str());
+                        if (count < 1) count = 1;
+                        lv_textarea_set_cursor_pos(terminal_output, cpos + count);
+                    } else if (cmd == 'D') {
+                        // Non-destructive cursor left
+                        int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+                        int count = 1;
+                        if (!params.empty()) count = atoi(params.c_str());
+                        if (count < 1) count = 1;
+                        if (cpos >= count) {
+                            lv_textarea_set_cursor_pos(terminal_output, cpos - count);
+                        } else {
+                            lv_textarea_set_cursor_pos(terminal_output, 0);
+                        }
+                    } else if (cmd == 'G' || cmd == '`') {
+                        // Cursor Horizontal Absolute (CHA / HPA)
+                        int target_col = 1;
+                        if (!params.empty()) target_col = atoi(params.c_str());
+                        if (target_col < 1) target_col = 1;
+
+                        lv_obj_t* ta_lbl = lv_textarea_get_label(terminal_output);
+                        if (ta_lbl) {
+                            int32_t cp = lv_textarea_get_cursor_pos(terminal_output);
+                            lv_point_t pt;
+                            lv_label_get_letter_pos(ta_lbl, cp, &pt);
+                            pt.x = 0;
+                            uint32_t sol = lv_label_get_letter_on(ta_lbl, &pt, true);
+                            const char* txt = lv_textarea_get_text(terminal_output);
+                            size_t tlen = txt ? strlen(txt) : 0;
+                            uint32_t pos = sol;
+                            for (int c = 1; c < target_col && pos < tlen; c++) {
+                                if (txt[pos] == '\n') break;
+                                lv_point_t next_pt;
+                                lv_label_get_letter_pos(ta_lbl, pos + 1, &next_pt);
+                                if (next_pt.y > pt.y + 2) break; // Wrapped to next visual line
+                                pos++;
+                            }
+                            lv_textarea_set_cursor_pos(terminal_output, pos);
+                        }
+                    } else if (cmd == 'H' || cmd == 'f') {
+                        // Cursor Position (CUP / HVP)
+                        int row = 1;
+                        int col = 1;
+                        if (!params.empty()) {
+                            size_t semi = params.find(';');
+                            if (semi != std::string::npos) {
+                                row = atoi(params.substr(0, semi).c_str());
+                                col = atoi(params.substr(semi + 1).c_str());
+                            } else {
+                                row = atoi(params.c_str());
+                            }
+                        }
+                        if (row < 1) row = 1;
+                        if (col < 1) col = 1;
+                        lv_obj_t* ta_lbl = lv_textarea_get_label(terminal_output);
+                        if (ta_lbl) {
+                            const lv_font_t* font = lv_obj_get_style_text_font(ta_lbl, LV_PART_MAIN);
+                            int32_t font_h = font ? lv_font_get_line_height(font) : 12;
+                            int32_t line_space = lv_obj_get_style_text_line_space(ta_lbl, LV_PART_MAIN);
+                            lv_point_t pt;
+                            pt.y = (row - 1) * (font_h + line_space) + (font_h / 2);
+                            pt.x = (col - 1) * 6;
+                            uint32_t np = lv_label_get_letter_on(ta_lbl, &pt, true);
+                            lv_textarea_set_cursor_pos(terminal_output, np);
+                        }
+                    } else if (cmd == 'J') {
+                        // Erase in Display (ED)
+                        if (params == "2" || params == "3") {
+                            lv_textarea_set_text(terminal_output, "");
+                            lv_textarea_set_cursor_pos(terminal_output, 0);
+                            s_color_tag_open = false;
+                            s_utf8_len = 0;
+                            s_utf8_expected = 0;
+                        } else if (params.empty() || params == "0") {
+                            int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+                            const char* txt = lv_textarea_get_text(terminal_output);
+                            if (txt && cpos >= 0 && cpos < (int32_t)strlen(txt)) {
+                                std::string kept(txt, cpos);
+                                lv_textarea_set_text(terminal_output, kept.c_str());
+                                lv_textarea_set_cursor_pos(terminal_output, cpos);
+                            }
+                        }
                     } else if (cmd == 'K') {
                         // Erase in line
                         if (params == "2") {
@@ -3131,22 +3279,12 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                         for (int k = 0; k < count; k++) {
                             lv_textarea_delete_char_forward(terminal_output);
                         }
-                    } else if (cmd == 'D') {
-                        // Non-destructive cursor left
-                        int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
-                        int count = 1;
-                        if (!params.empty()) count = atoi(params.c_str());
-                        if (count < 1) count = 1;
-                        if (cpos >= count) {
-                            lv_textarea_set_cursor_pos(terminal_output, cpos - count);
-                        }
-                    } else if (cmd == 'C') {
-                        // Cursor right
-                        int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
-                        int count = 1;
-                        if (!params.empty()) count = atoi(params.c_str());
-                        if (count < 1) count = 1;
-                        lv_textarea_set_cursor_pos(terminal_output, cpos + count);
+                    } else if (cmd == 's') {
+                        // Save cursor position
+                        s_saved_cursor_pos = lv_textarea_get_cursor_pos(terminal_output);
+                    } else if (cmd == 'u') {
+                        // Restore cursor position
+                        lv_textarea_set_cursor_pos(terminal_output, s_saved_cursor_pos);
                     }
                 }
             } else if (i + 1 < len && data[i + 1] == ']') {
@@ -3175,14 +3313,24 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                 i++;
                 ch = '\n';
             } else {
-                const char* cur_t = lv_textarea_get_text(terminal_output);
-                if (cur_t && cur_t[0] != '\0') {
+                lv_obj_t* ta_lbl = lv_textarea_get_label(terminal_output);
+                if (ta_lbl) {
                     int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
-                    if (cpos > (int32_t)strlen(cur_t)) cpos = strlen(cur_t);
-                    std::string before(cur_t, cpos);
-                    size_t last_nl = before.rfind('\n');
-                    int32_t sol = (last_nl != std::string::npos) ? (int32_t)(last_nl + 1) : 0;
+                    lv_point_t pt;
+                    lv_label_get_letter_pos(ta_lbl, cpos, &pt);
+                    pt.x = 0;
+                    uint32_t sol = lv_label_get_letter_on(ta_lbl, &pt, true);
                     lv_textarea_set_cursor_pos(terminal_output, sol);
+                } else {
+                    const char* cur_t = lv_textarea_get_text(terminal_output);
+                    if (cur_t && cur_t[0] != '\0') {
+                        int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+                        if (cpos > (int32_t)strlen(cur_t)) cpos = strlen(cur_t);
+                        std::string before(cur_t, cpos);
+                        size_t last_nl = before.rfind('\n');
+                        int32_t sol = (last_nl != std::string::npos) ? (int32_t)(last_nl + 1) : 0;
+                        lv_textarea_set_cursor_pos(terminal_output, sol);
+                    }
                 }
                 pending_cr = true;
                 continue;
@@ -3196,8 +3344,17 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         // 3. Line feed '\n'
         if (ch == '\n') {
             flush_batch();
-            lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);
-            lv_textarea_add_char(terminal_output, '\n');
+            int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+            const char* cur_t = lv_textarea_get_text(terminal_output);
+            size_t cur_len = cur_t ? strlen(cur_t) : 0;
+            if (cpos < (int32_t)cur_len) {
+                // In the middle of existing text: move down to next line
+                lv_textarea_cursor_down(terminal_output);
+            } else {
+                // At the end of buffer: append newline
+                lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);
+                lv_textarea_add_char(terminal_output, '\n');
+            }
             continue;
         }
 
