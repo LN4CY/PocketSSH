@@ -1362,7 +1362,7 @@ void SSHTerminal::handle_key_input(char key)
             ssh_write_all("\x7F", 1);
             return;
         }
-        else if (ssh_at_line_start && (key == ':' || key == '~')) {
+        else if (ssh_cmd_buffer.empty() && (key == ':' || key == '~')) {
             ssh_cmd_buffer += key;
             char k_str[2] = { key, '\0' };
             append_text(k_str);
@@ -1371,11 +1371,22 @@ void SSHTerminal::handle_key_input(char key)
         else if (!ssh_cmd_buffer.empty()) {
             ssh_cmd_buffer += key;
             std::string prefix = ssh_cmd_buffer.substr(1);
-            bool matches_getkey = (prefix.length() <= 6 && std::string("getkey").rfind(prefix, 0) == 0) || (prefix.rfind("getkey", 0) == 0);
-            bool matches_keys = (prefix.length() <= 4 && std::string("keys").rfind(prefix, 0) == 0);
-            bool matches_test = (prefix.length() <= 8 && std::string("selftest").rfind(prefix, 0) == 0) || (prefix.length() <= 4 && std::string("test").rfind(prefix, 0) == 0);
-            if (!matches_getkey && !matches_keys && !matches_test) {
-                // Not an escape command - flush entire buffer to remote shell
+            static const std::vector<std::string> s_esc_cmds = {
+                "getkey", "keys", "test", "selftest", "help", "exit", "quit", "clear"
+            };
+            bool matches_any = false;
+            for (const auto& cmd_name : s_esc_cmds) {
+                if (prefix.length() <= cmd_name.length() && cmd_name.rfind(prefix, 0) == 0) {
+                    matches_any = true;
+                    break;
+                }
+                if (prefix.length() > cmd_name.length() && prefix.rfind(cmd_name + " ", 0) == 0) {
+                    matches_any = true;
+                    break;
+                }
+            }
+            if (!matches_any) {
+                // Not a recognized escape command - flush entire buffer to remote shell
                 libssh2_channel_write(channel, ssh_cmd_buffer.c_str(), ssh_cmd_buffer.size());
                 ssh_cmd_buffer.clear();
                 ssh_at_line_start = false;
@@ -3384,6 +3395,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     }
                     lv_textarea_set_cursor_pos(terminal_output, sol);
                 }
+                ssh_at_line_start = true;
                 pending_cr = true;
                 continue;
             }
@@ -3396,6 +3408,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         // 3. Line feed '\n'
         if (ch == '\n') {
             flush_batch();
+            ssh_at_line_start = true;
             int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
             const char* cur_t = lv_textarea_get_text(terminal_output);
             size_t cur_len = cur_t ? strlen(cur_t) : 0;
@@ -4677,6 +4690,18 @@ void SSHTerminal::process_escape_command(const std::string& raw_cmd)
         show_loaded_keys();
     } else if (cmd == "test" || cmd == "selftest") {
         run_terminal_self_tests();
+    } else if (cmd == "exit" || cmd == "quit") {
+        disconnect();
+    } else if (cmd == "clear") {
+        clear_terminal();
+    } else if (cmd == "help" || cmd.empty()) {
+        append_text("\n=== PocketSSH Escape Commands ===\n");
+        append_text("  :getkey [remote_path] - Fetch key from server (opens dialog if empty)\n");
+        append_text("  :keys                 - List all loaded SSH keys\n");
+        append_text("  :test                 - Run terminal validation & self-tests\n");
+        append_text("  :clear                - Clear terminal output\n");
+        append_text("  :exit                 - Disconnect SSH session\n");
+        append_text("=================================\n\n");
     } else if (cmd == "getkey" || cmd.rfind("getkey ", 0) == 0) {
         std::vector<std::string> args;
         std::string arg;

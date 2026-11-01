@@ -1,3 +1,11 @@
+Write-Host "Running PocketSSH Pre-Build Verification and Validation Tests..." -ForegroundColor Cyan
+& powershell -ExecutionPolicy Bypass -File .\tests\run_tests.ps1
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Pre-build tests failed! Aborting firmware build to prevent regression."
+    exit $LASTEXITCODE
+}
+Write-Host "All tests passed! Proceeding with firmware compilation..." -ForegroundColor Green
+
 $env:IDF_TOOLS_PATH = "E:\proj\sdk\.espressif"
 $env:PATH = "E:\proj\sdk\.espressif\tools\idf-python\3.11.2;$env:PATH"
 . E:\proj\sdk\v5.4.1\esp-idf\export.ps1
