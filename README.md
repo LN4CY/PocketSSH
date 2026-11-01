@@ -63,8 +63,8 @@ PocketSSH is a standalone, ultra-portable SSH2 client and terminal environment e
   - [Remote Key Fetching (`getkey` / `:getkey`)](#remote-key-fetching-getkey--getkey)
   - [MicroSD Directory Structure](#microsd-directory-structure)
 - [Verification & Validation (V&V) Guide](#verification--validation-vv-guide)
-  - [Host Pre-Build Tests](#host-pre-build-tests)
-  - [On-Device Self-Tests](#on-device-self-tests)
+  - [Host Pre-Build Unit & Integration Tests](#host-pre-build-unit--integration-tests)
+  - [Virtual ESP32-S3 Target (QEMU) Integration Tests](#virtual-esp32-s3-target-qemu-integration-tests)
 - [Architecture & Technical Details](#architecture--technical-details)
   - [Shared SPI Bus Architecture](#shared-spi-bus-architecture)
   - [FreeRTOS Tasks](#freertos-tasks)
@@ -383,11 +383,11 @@ You do not need to take out the MicroSD card to install new keys. You can fetch 
 
 ## Verification & Validation (V&V) Guide
 
-To prevent regressions, PocketSSH features a multi-tiered Verification & Validation system:
+To prevent regressions, PocketSSH features a multi-tiered Verification & Validation system consisting of host pre-build unit tests and full virtual target integration tests in QEMU:
 
-### Host Pre-Build Tests
+### Host Pre-Build Unit & Integration Tests
 
-Located in [tests/test_terminal.py](tests/test_terminal.py), this Python test suite exercises 25 unit and integration tests across 6 core subsystems:
+Located in [tests/test_terminal.py](tests/test_terminal.py), this Python test suite exercises 28 unit and integration tests across 6 core subsystems in under 5 milliseconds:
 
 ```powershell
 pwsh -File .\tests\run_tests.ps1
@@ -432,10 +432,56 @@ Ran 28 tests in 0.001s
 [OK] ALL 28 SUBSYSTEM UNIT AND INTEGRATION TESTS PASSED (100% VERIFIED)
 ```
 
+### Virtual ESP32-S3 Target (QEMU) Integration Tests
+
+To test the actual compiled C++ Xtensa firmware binary before flashing physical hardware, PocketSSH supports Espressif's official QEMU emulator (`qemu-system-xtensa`). The firmware automatically detects when running in a virtual target (lacking Octal PSRAM and physical ST7789 SPI display) and boots a responsive **Headless Serial Terminal** over UART0.
+
+#### Running Automated QEMU Tests
+
+Run the automated virtual target test runner script:
+
+```powershell
+pwsh -File .\tests\run_qemu_test.ps1
+```
+
+```text
+==========================================================
+  POCKETSSH VIRTUAL TARGET (QEMU) INTEGRATION TESTS
+==========================================================
+=================================================================
+  PocketSSH Virtual ESP32-S3 Target (QEMU) Integration Test
+=================================================================
+[*] Found QEMU emulator: ...\tools\qemu-xtensa\...\qemu-system-xtensa.exe
+[*] Launching PocketSSH in virtual ESP32-S3 target...
+[TEST 1/5] Verifying ROM bootloader & virtual target detection... [PASS]
+[TEST 2/5] Testing interactive 'version' command... [PASS]
+[TEST 3/5] Testing interactive 'help' command... [PASS]
+[TEST 4/5] Testing SSH key manager command 'keys'... [PASS]
+[TEST 5/5] Testing unknown command rejection & prompt recovery... [PASS]
+[*] Terminating virtual QEMU target...
+=================================================================
+[OK] ALL 5/5 VIRTUAL TARGET QEMU TESTS PASSED!
+=================================================================
+```
+
+#### Running QEMU Interactively
+
+You can also run PocketSSH interactively inside your desktop terminal:
+
+```powershell
+& "E:\proj\sdk\.espressif\tools\qemu-xtensa\esp_develop_9.0.0_20240606\qemu\bin\qemu-system-xtensa.exe" `
+    -machine esp32s3 `
+    -drive file=build/qemu_flash.bin,if=mtd,format=raw `
+    -drive file=build/qemu_efuse.bin,if=none,format=raw,id=efuse `
+    -nographic -serial mon:stdio
+```
+
+You can type local commands like `help`, `version`, `keys`, `status`, etc., directly into your PowerShell terminal with live character echo and history editing. Press `Ctrl+A` then `X` to exit QEMU.
+
 ### Automated Testing Strategy
 Testing is decoupled from physical hardware through host-level and virtual environment execution:
 - **Host Unit & Integration Tests**: Run in milliseconds via `tests/run_tests.ps1` before every build, ensuring zero regression in terminal emulation, character mapping, and session routing.
-- **Virtual Target Ready**: Designed for execution within automated CI and QEMU/virtual ESP32 simulator targets, eliminating brittle on-device test routines in favor of reproducible, automated validation pipelines.
+- **Virtual ESP32-S3 QEMU Tests**: Run in ~8 seconds via `tests/run_qemu_test.ps1` after every build, booting the real ESP32-S3 Xtensa binary and validating FreeRTOS kernel startup, heap allocations, command dispatch, and serial line discipline.
 
 ---
 
@@ -521,10 +567,12 @@ Run [build_firmware.ps1](build_firmware.ps1) from the repository root:
 .\build_firmware.ps1
 ```
 This script:
-1. Executes the 25-test host V&V test suite.
-2. Halts compilation immediately if any test fails.
+1. Executes the 28-test host V&V test suite.
+2. Halts compilation immediately if any pre-build test fails.
 3. Compiles the project using `idf.py build`.
-4. Merges all components into `build/PocketSSH_merged_0x0.bin`.
+4. Merges all components into `build/PocketSSH_merged_0x0.bin` (compact for flashing to hardware).
+5. Generates `build/qemu_flash.bin` (16MB padded MTD image for virtual execution).
+6. Executes the 5-test QEMU Virtual ESP32-S3 Target integration suite.
 
 To flash directly using the build script:
 ```powershell
@@ -536,11 +584,12 @@ To flash directly using the build script:
 ## Version History
 
 ### v1.3.0 (October 31 - November 1, 2026)
+- **Added**: Virtual ESP32-S3 Target (QEMU) integration test harness (`tests/run_qemu_test.ps1`, `tests/test_qemu.py`) and Headless Serial Terminal over UART0 with automatic target detection.
 - **Added**: Alt+Enter Local Shell Toggle (`[local]> `) allowing seamless switching between remote SSH and local commands without disconnecting.
 - **Added**: Interactive Remote Key Fetcher (`getkey` / `:getkey`) with touch file picker modal and PEM format checking.
-- **Added**: Pre-Build Verification & Validation (V&V) Host Test Suite (25 automated unit & integration tests) integrated into `build_firmware.ps1`.
+- **Added**: Pre-Build Verification & Validation (V&V) Host Test Suite (28 automated unit & integration tests) integrated into `build_firmware.ps1`.
 - **Added**: Pure Tilde (`~/`) passthrough deconfliction (zero delay, no escape buffering or double-echoing).
-- **Added**: Single pre-merged binary release (`PocketSSH_merged_0x0.bin` at offset `0x0`).
+- **Added**: Single pre-merged binary release (`PocketSSH_merged_0x0.bin` at offset `0x0`) and 16MB QEMU image (`qemu_flash.bin`).
 - **Added**: MicroSD Card Permanent Mount & Shared SPI Bus Architecture on `SPI2_HOST`.
 - **Added**: Real-Time SSH Activity Indicator (`[WAIT...]`, live rotating spinner, `[ONLINE]`).
 - **Added**: Dynamic Alt Mode, Dual-Behavior Trackball (Scroll vs Arrows), and 16 missing symbol chords.

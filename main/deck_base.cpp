@@ -15,6 +15,7 @@
 #include "esp_err.h"
 #include "esp_check.h"
 #include "esp_timer.h"
+#include "esp_rom_sys.h"
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 #include "bsp/touch.h"
@@ -24,6 +25,7 @@
 
 #include "esp_lcd_touch_gt911.h"
 #include "driver/gpio.h"
+#include "esp_heap_caps.h"
 
 #include "utilities.h"
 #include "c3_keyboard.hpp"
@@ -397,6 +399,42 @@ void trackball_task(void *param)
     }
 }
 
+void serial_terminal_task(void *param)
+{
+    static bool last_was_cr = false;
+    while (1) {
+        int c = fgetc(stdin);
+        if (c != EOF && c >= 0) {
+            char ch = (char)c;
+            if (ch == '\n' && last_was_cr) {
+                last_was_cr = false;
+                continue;
+            }
+            last_was_cr = (ch == '\r');
+
+            // If splash screen is active, dismiss it
+            if (splash_screen) {
+                dismiss_splash_screen();
+            }
+
+            // Echo character for interactive serial shell
+            if (ch >= 32 && ch <= 126) {
+                esp_rom_printf("%c", ch);
+            } else if (ch == 8 || ch == 127) {
+                esp_rom_printf("\b \b");
+            } else if (ch == '\r' || ch == '\n') {
+                esp_rom_printf("\r\n");
+            }
+
+            if (ssh_terminal) {
+                ssh_terminal->handle_key_input(ch);
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+    }
+}
+
 static uint8_t s_detected_touch_addr = 0;
 
 esp_err_t _bsp_touch_new(const bsp_touch_config_t *config, esp_lcd_touch_handle_t *ret_touch)
@@ -538,6 +576,9 @@ void load_ssh_keys_from_sd(SSHTerminal* terminal);
 
 extern "C" void app_main(void)
 {
+    esp_rom_printf("\n====================================\n[PocketSSH] Virtual Target Boot OK!\n====================================\n\n");
+    printf("\n====================================\n[PocketSSH] Starting on ESP32-S3...\n====================================\n");
+    fflush(stdout);
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -548,42 +589,59 @@ extern "C" void app_main(void)
     /* Initialize device GPIOs */
     device_init();
 
-    /* Initialize display and LVGL (Initializes SPI2_HOST with display) */
-    lv_display_t *disp = bsp_display_start();
-
-    /* Set display brightness to 100% */
-    bsp_display_backlight_on();
-
-    /* Mount SD card on shared SPI2 bus concurrently with display */
-    esp_err_t sd_status = mount_sdcard();
-
-    /* Initialize touch (auto-detects GT911 on 0x5D or 0x14 with polling mode) */
-    esp_lcd_touch_handle_t touch_handle = NULL;
-    const bsp_touch_config_t bsp_touch_cfg = {};
-    esp_err_t touch_status = _bsp_touch_new(&bsp_touch_cfg, &touch_handle);
-
-    if (touch_status == ESP_OK && touch_handle != NULL) {
-        /* Add touch input (for selected screen) */
-        const lvgl_port_touch_cfg_t touch_cfg = {
-            .disp = disp,
-            .handle = touch_handle,
-            .scale = {.x = 0, .y = 0},
-        };
-        lvgl_port_add_touch(&touch_cfg);
-        ESP_LOGI(TAG, "Touch input registered with LVGL");
-    } else {
-        ESP_LOGI(TAG, "Touch controller not found - running in Trackball & Keyboard mode");
+    bool virtual_target = false;
+#if CONFIG_SPIRAM
+    if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM) == 0) {
+        virtual_target = true;
     }
+#endif
 
-    bsp_display_lock(0);
+    lv_display_t *disp = NULL;
+    esp_err_t sd_status = ESP_FAIL;
+    esp_lcd_touch_handle_t touch_handle = NULL;
+    esp_err_t touch_status = ESP_FAIL;
 
-    // Show splash screen animation
-    show_splash_screen();
+    if (!virtual_target) {
+        /* Initialize display and LVGL (Initializes SPI2_HOST with display) */
+        disp = bsp_display_start();
+
+        /* Set display brightness to 100% */
+        bsp_display_backlight_on();
+
+        /* Mount SD card on shared SPI2 bus concurrently with display */
+        sd_status = mount_sdcard();
+
+        /* Initialize touch (auto-detects GT911 on 0x5D or 0x14 with polling mode) */
+        const bsp_touch_config_t bsp_touch_cfg = {};
+        touch_status = _bsp_touch_new(&bsp_touch_cfg, &touch_handle);
+
+        if (touch_status == ESP_OK && touch_handle != NULL) {
+            /* Add touch input (for selected screen) */
+            const lvgl_port_touch_cfg_t touch_cfg = {
+                .disp = disp,
+                .handle = touch_handle,
+                .scale = {.x = 0, .y = 0},
+            };
+            lvgl_port_add_touch(&touch_cfg);
+            ESP_LOGI(TAG, "Touch input registered with LVGL");
+        } else {
+            ESP_LOGI(TAG, "Touch controller not found - running in Trackball & Keyboard mode");
+        }
+
+        bsp_display_lock(0);
+
+        // Show splash screen animation
+        show_splash_screen();
+    } else {
+        ESP_LOGI(TAG, "Virtual Target (QEMU) detected: running Headless Serial Terminal");
+    }
 
     // Create terminal instance
     ssh_terminal = new SSHTerminal();
     load_ssh_keys_from_sd(ssh_terminal);
-    ssh_screen = ssh_terminal->create_terminal_screen();
+    if (disp) {
+        ssh_screen = ssh_terminal->create_terminal_screen();
+    }
     
     // Display version and initial instructions
 #ifdef POCKETSSH_VERSION
@@ -592,20 +650,25 @@ extern "C" void app_main(void)
     ssh_terminal->append_text("PocketSSH Terminal Ready\n");
 #endif
 
-    // Display storage status
-    if (sd_status == ESP_OK) {
-        ssh_terminal->append_text("Storage: MicroSD mounted (/sdcard)\n");
-    } else {
-        ssh_terminal->append_text("Storage: MicroSD not mounted (NVS fallback)\n");
-    }
+    if (!virtual_target) {
+        // Display storage status
+        if (sd_status == ESP_OK) {
+            ssh_terminal->append_text("Storage: MicroSD mounted (/sdcard)\n");
+        } else {
+            ssh_terminal->append_text("Storage: MicroSD not mounted (NVS fallback)\n");
+        }
 
-    // Display touch controller status
-    if (touch_status == ESP_OK && touch_handle != NULL) {
-        char touch_info[64];
-        snprintf(touch_info, sizeof(touch_info), "Touch: GT911 active (0x%02X)\n", s_detected_touch_addr);
-        ssh_terminal->append_text(touch_info);
+        // Display touch controller status
+        if (touch_status == ESP_OK && touch_handle != NULL) {
+            char touch_info[64];
+            snprintf(touch_info, sizeof(touch_info), "Touch: GT911 active (0x%02X)\n", s_detected_touch_addr);
+            ssh_terminal->append_text(touch_info);
+        } else {
+            ssh_terminal->append_text("Touch: Hardware not detected (Trackball navigation mode)\n");
+        }
     } else {
-        ssh_terminal->append_text("Touch: Hardware not detected (Trackball navigation mode)\n");
+        ssh_terminal->append_text("Environment: Virtual ESP32-S3 Target (Headless Serial Terminal)\n");
+        ssh_terminal->append_text("Storage: NVS Flash\n");
     }
 
     // Display loaded SSH keys
@@ -626,14 +689,21 @@ extern "C" void app_main(void)
     // Update status bar to show initial battery voltage
     ssh_terminal->update_status_bar();
 
-    bsp_display_unlock();
+    if (disp) {
+        bsp_display_unlock();
+    } else {
+        ssh_terminal->append_text("> ");
+    }
 
-    // Check for saved WiFi network and auto-connect
-    ssh_terminal->try_autoconnect();
+    if (!virtual_target) {
+        // Check for saved WiFi network and auto-connect
+        ssh_terminal->try_autoconnect();
 
-    xTaskCreate(keypad_task, "keypad_task", 4096, NULL, 5, NULL);
-    
-    xTaskCreate(trackball_task, "trackball_task", 4096, NULL, 5, NULL);
+        xTaskCreate(keypad_task, "keypad_task", 4096, NULL, 5, NULL);
+        xTaskCreate(trackball_task, "trackball_task", 4096, NULL, 5, NULL);
+    }
+
+    xTaskCreate(serial_terminal_task, "serial_terminal_task", 4096, NULL, 5, NULL);
 }
 
 static sdmmc_card_t* s_sdcard = nullptr;

@@ -11,6 +11,7 @@
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_rom_sys.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
@@ -1143,7 +1144,11 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
 
 void SSHTerminal::append_text(const char* text)
 {
-    if (!terminal_output || !text) {
+    if (!text) {
+        return;
+    }
+    esp_rom_printf("%s", text);
+    if (!terminal_output) {
         return;
     }
     
@@ -1914,6 +1919,10 @@ void SSHTerminal::handle_key_input(char key)
             current_input.clear();
             cursor_pos = 0;
             history_index = -1;
+            if (!terminal_screen) {
+                std::string prompt_str = (ssh_connected && is_local_mode_during_ssh) ? "[local]> " : "> ";
+                append_text(prompt_str.c_str());
+            }
     } else if (key == 8 || key == 127) {
         // Backspace - delete character before cursor
         if (cursor_pos > 0 && !current_input.empty()) {
