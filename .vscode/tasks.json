@@ -44,10 +44,7 @@
       "label": "PocketSSH: Connect to Wokwi Serial Console (Interactive)",
       "type": "shell",
       "command": "powershell",
-      "args": [
-        "-Command",
-        "& 'E:\\proj\\sdk\\.espressif\\tools\\idf-python\\3.11.2\\python.exe' -m serial.tools.miniterm rfc2217://localhost:4000 115200"
-      ],
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/tools/connect_serial.ps1"],
       "presentation": {
         "focus": true,
         "panel": "new"
