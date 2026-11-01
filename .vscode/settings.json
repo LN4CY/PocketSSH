@@ -1,0 +1,17 @@
+{
+  "idf.espIdfPathWin": "E:\\proj\\sdk\\v5.4.1\\esp-idf",
+  "idf.toolsPathWin": "E:\\proj\\sdk\\.espressif",
+  "idf.customExtraPaths": "E:\\proj\\sdk\\.espressif\\tools\\xtensa-esp-elf\\esp-14.2.0_20241119\\xtensa-esp-elf\\bin;E:\\proj\\sdk\\.espressif\\tools\\esp32ulp-elf\\2.38_20240113\\esp32ulp-elf\\bin;E:\\proj\\sdk\\.espressif\\tools\\cmake\\3.30.2\\bin;E:\\proj\\sdk\\.espressif\\tools\\ninja\\1.12.1;E:\\proj\\sdk\\.espressif\\tools\\idf-exe\\1.0.3;E:\\proj\\sdk\\.espressif\\tools\\ccache\\4.10.2\\ccache-4.10.2-windows-x86_64;E:\\proj\\sdk\\.espressif\\tools\\idf-python\\3.11.2",
+  "idf.customExtraVars": {
+    "OPENOCD_SCRIPTS": "E:\\proj\\sdk\\.espressif\\tools\\openocd-esp32\\v0.12.0-esp32-20241016\\openocd-esp32\\share\\openopenocd\\scripts",
+    "IDF_CCACHE_ENABLE": "1",
+    "ESP_ROM_ELF_DIR": "E:\\proj\\sdk\\.espressif\\tools\\esp-rom-elfs\\20241011/"
+  },
+  "idf.pythonBinPathWin": "E:\\proj\\sdk\\.espressif\\python_env\\idf5.4_py3.11_env\\Scripts\\python.exe",
+  "idf.target": "esp32s3",
+  "idf.flashType": "UART",
+  "files.associations": {
+    "*.hpp": "cpp",
+    "*.h": "c"
+  }
+}

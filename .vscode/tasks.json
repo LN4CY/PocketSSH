@@ -1,0 +1,51 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "PocketSSH: Build Firmware",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/build_firmware.ps1"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "PocketSSH: Run Host Unit Tests",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/tests/run_tests.ps1"],
+      "group": "test"
+    },
+    {
+      "label": "PocketSSH: Run QEMU Virtual Target (Interactive)",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/run_qemu.ps1"],
+      "problemMatcher": []
+    },
+    {
+      "label": "PocketSSH: Run QEMU Automated Integration Tests",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/tests/run_qemu_test.ps1"],
+      "group": "test"
+    },
+    {
+      "label": "PocketSSH: Run Wokwi Automated Integration Tests",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/tests/run_wokwi_test.ps1"],
+      "group": "test"
+    },
+    {
+      "label": "PocketSSH: Flash Physical Device",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/flash_firmware.ps1"],
+      "problemMatcher": []
+    }
+  ]
+}

@@ -16,18 +16,23 @@ if (-not (Test-Path $flasherArgs) -or -not (Test-Path $appElf)) {
 }
 
 # 2. Check for wokwi-cli
-$wokwiCmd = Get-Command "wokwi-cli" -ErrorAction SilentlyContinue
-if (-not $wokwiCmd) {
-    # Check default installer locations
-    $candidatePaths = @(
-        (Join-Path $env:USERPROFILE ".wokwi\wokwi-cli.exe"),
-        (Join-Path $env:LOCALAPPDATA "Programs\wokwi-cli\wokwi-cli.exe"),
-        (Join-Path $env:USERPROFILE "bin\wokwi-cli.exe")
-    )
-    foreach ($p in $candidatePaths) {
-        if (Test-Path $p) {
-            $wokwiCmd = $p
-            break
+$localTool = Join-Path $repoRoot "tools\wokwi-cli.exe"
+if (Test-Path $localTool) {
+    $wokwiCmd = $localTool
+} else {
+    $wokwiCmd = Get-Command "wokwi-cli" -ErrorAction SilentlyContinue
+    if (-not $wokwiCmd) {
+        # Check default installer locations
+        $candidatePaths = @(
+            (Join-Path $env:USERPROFILE ".wokwi\wokwi-cli.exe"),
+            (Join-Path $env:LOCALAPPDATA "Programs\wokwi-cli\wokwi-cli.exe"),
+            (Join-Path $env:USERPROFILE "bin\wokwi-cli.exe")
+        )
+        foreach ($p in $candidatePaths) {
+            if (Test-Path $p) {
+                $wokwiCmd = $p
+                break
+            }
         }
     }
 }
