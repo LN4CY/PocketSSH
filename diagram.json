@@ -6,8 +6,8 @@
     {
       "type": "board-esp32-s3-devkitc-1",
       "id": "esp",
-      "top": 0,
-      "left": 0,
+      "top": -80,
+      "left": -60,
       "attrs": {
         "flashSize": "16",
         "psramSize": "8",
@@ -18,25 +18,53 @@
       "type": "wokwi-ili9341",
       "id": "lcd",
       "top": -220,
-      "left": 140,
-      "rotate": 270,
+      "left": 160,
+      "rotate": 90,
       "attrs": {
-        "flipHorizontal": "1"
+        "flipVertical": "1"
       }
     },
     {
       "type": "wokwi-microsd-card",
       "id": "sdcard",
-      "top": 180,
-      "left": 280,
+      "top": 160,
+      "left": -60,
       "attrs": {}
     },
     {
       "type": "wokwi-pushbutton",
-      "id": "btn_boot",
+      "id": "tb_up",
       "top": 120,
-      "left": -120,
-      "attrs": { "color": "blue", "label": "BOOT / Click" }
+      "left": 250,
+      "attrs": { "color": "grey", "label": "▲ Up (Scroll)" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "tb_left",
+      "top": 170,
+      "left": 190,
+      "attrs": { "color": "grey", "label": "◀ Left" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "tb_click",
+      "top": 170,
+      "left": 250,
+      "attrs": { "color": "blue", "label": "● Trackball Click (Alt Mode)" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "tb_right",
+      "top": 170,
+      "left": 310,
+      "attrs": { "color": "grey", "label": "▶ Right" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "tb_down",
+      "top": 220,
+      "left": 250,
+      "attrs": { "color": "grey", "label": "▼ Down (Scroll)" }
     }
   ],
   "connections": [
@@ -53,8 +81,16 @@
     [ "esp:41", "sdcard:DI", "green", [ "v0" ] ],
     [ "esp:38", "sdcard:DO", "purple", [ "v0" ] ],
     [ "esp:40", "sdcard:SCK", "blue", [ "v0" ] ],
-    [ "esp:0", "btn_boot:1.l", "green", [ "v0" ] ],
-    [ "esp:GND.1", "btn_boot:2.l", "black", [ "v0" ] ]
+    [ "esp:3", "tb_up:1.l", "green", [ "v0" ] ],
+    [ "esp:GND.1", "tb_up:2.l", "black", [ "v0" ] ],
+    [ "esp:1", "tb_left:1.l", "green", [ "v0" ] ],
+    [ "esp:GND.1", "tb_left:2.l", "black", [ "v0" ] ],
+    [ "esp:0", "tb_click:1.l", "blue", [ "v0" ] ],
+    [ "esp:GND.1", "tb_click:2.l", "black", [ "v0" ] ],
+    [ "esp:2", "tb_right:1.l", "green", [ "v0" ] ],
+    [ "esp:GND.1", "tb_right:2.l", "black", [ "v0" ] ],
+    [ "esp:15", "tb_down:1.l", "green", [ "v0" ] ],
+    [ "esp:GND.1", "tb_down:2.l", "black", [ "v0" ] ]
   ],
   "serialMonitor": {
     "display": "terminal"
