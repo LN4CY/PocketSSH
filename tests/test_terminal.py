@@ -425,52 +425,45 @@ class TestTerminalIntegration(unittest.TestCase):
         self.assertEqual(pty_modes[5], 5)
         self.assertEqual(pty_modes[9], 4)
 
-    def test_backspace_blocked_at_prompt_start_in_ssh(self):
-        # Client side: simulate key input with ssh_typed_chars tracking
-        ssh_at_line_start = True
-        ssh_typed_chars = 0
+    def test_backspace_forwarded_to_remote_shell_in_ssh(self):
+        # In interactive SSH mode, backspace (8 or 127) must always be sent as \x7F
+        # to the remote shell so history recall (Up Arrow) and tab completion can be edited!
+        ssh_cmd_buffer = ""
         sent_to_server = []
 
         def handle_key(k):
-            nonlocal ssh_at_line_start, ssh_typed_chars
+            nonlocal ssh_cmd_buffer
             if k in (8, 127):
-                if ssh_at_line_start or ssh_typed_chars == 0:
-                    return # Blocked locally
-                ssh_typed_chars -= 1
-                if ssh_typed_chars == 0:
-                    ssh_at_line_start = True
+                if ssh_cmd_buffer:
+                    ssh_cmd_buffer = ssh_cmd_buffer[:-1]
+                    return
                 sent_to_server.append('\x7F')
-            elif k in ('\r', '\n'):
-                ssh_at_line_start = True
-                ssh_typed_chars = 0
-                sent_to_server.append('\r')
+            elif k == ':' and not ssh_cmd_buffer:
+                ssh_cmd_buffer += ':'
+            elif ssh_cmd_buffer:
+                ssh_cmd_buffer += k
             else:
-                ssh_at_line_start = False
-                ssh_typed_chars += 1
                 sent_to_server.append(k)
 
-        # 1. Backspace when prompt is idle (nothing typed)
+        # 1. Backspace after Up Arrow (command recalled from bash history):
+        # Server recalled "ping 8.8.8.8". User presses Backspace 8 times to edit it.
+        # Backspace MUST be forwarded to server as \x7F!
+        for _ in range(8):
+            handle_key(8)
+        self.assertEqual(sent_to_server, ['\x7F'] * 8)
+
+        # 2. Key 127 (DEL) also forwarded as \x7F
         handle_key(127)
+        self.assertEqual(sent_to_server, ['\x7F'] * 9)
+
+        # 3. Local escape command editing:
+        handle_key(':')
+        handle_key('g')
+        handle_key('e')
+        self.assertEqual(ssh_cmd_buffer, ":ge")
         handle_key(8)
-        self.assertEqual(sent_to_server, []) # Must NOT send anything to server!
-
-        # 2. Type "ls" (2 chars)
-        handle_key('l')
-        handle_key('s')
-        self.assertEqual(sent_to_server, ['l', 's'])
-        self.assertEqual(ssh_typed_chars, 2)
-        self.assertFalse(ssh_at_line_start)
-
-        # 3. Backspace twice to delete "ls"
-        handle_key(127)
-        handle_key(127)
-        self.assertEqual(sent_to_server, ['l', 's', '\x7F', '\x7F'])
-        self.assertEqual(ssh_typed_chars, 0)
-        self.assertTrue(ssh_at_line_start)
-
-        # 4. Third backspace when nothing left to delete must be blocked locally
-        handle_key(127)
-        self.assertEqual(sent_to_server, ['l', 's', '\x7F', '\x7F']) # No 3rd \x7F!
+        self.assertEqual(ssh_cmd_buffer, ":g") # Backspace popped local escape buffer!
+        self.assertEqual(len(sent_to_server), 9) # Nothing sent to server while in escape mode
 
     def test_carriage_return_lone_replaces_active_line(self):
         # Simulates progress updates with lone \r

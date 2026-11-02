@@ -70,7 +70,6 @@ SSHTerminal::SSHTerminal()
       is_user_scrolled_back(false),
       ssh_cmd_buffer(""),
       ssh_at_line_start(true),
-      ssh_typed_chars(0),
       ssh_pending_cr(false),
       is_local_mode_during_ssh(false),
       cursor_pos(0),
@@ -1374,17 +1373,11 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                         }
                         return;
                     }
-                    if (ssh_at_line_start || ssh_typed_chars == 0) {
-                        return;
-                    }
-                    if (ssh_typed_chars > 0) {
-                        ssh_typed_chars--;
-                        if (ssh_typed_chars == 0) {
-                            ssh_at_line_start = true;
-                        }
-                    }
                     ssh_write_all("\x7F", 1);
                 } else {
+                    if (cursor_pos > current_input.length()) {
+                        cursor_pos = current_input.length();
+                    }
                     if (cursor_pos > 0 && !current_input.empty()) {
                         current_input.erase(cursor_pos - 1, 1);
                         cursor_pos--;
@@ -1509,13 +1502,11 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                 std::string cmd = ssh_cmd_buffer;
                 ssh_cmd_buffer.clear();
                 ssh_at_line_start = true;
-                ssh_typed_chars = 0;
                 set_activity_status("[ONLINE]", 0x50FF50);
                 process_escape_command(cmd);
                 return;
             }
             ssh_at_line_start = true;
-            ssh_typed_chars = 0;
             ssh_write_all("\r", 1);
             set_activity_status("[WAIT...]", 0xFFFF50);
             scroll_to_bottom();
@@ -1533,17 +1524,6 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                     set_activity_status(hud_text.c_str(), 0xFFFF50);
                 }
                 return;
-            }
-            if (ssh_at_line_start || ssh_typed_chars == 0) {
-                // At line start (prompt idle) with nothing typed: drop backspace locally
-                // to prevent deleting into the remote prompt or sending unintended characters!
-                return;
-            }
-            if (ssh_typed_chars > 0) {
-                ssh_typed_chars--;
-                if (ssh_typed_chars == 0) {
-                    ssh_at_line_start = true;
-                }
             }
             ssh_write_all("\x7F", 1);
             return;
@@ -1573,7 +1553,6 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
             if (!matches_any) {
                 // Not a recognized escape command - flush entire buffer to remote shell
                 libssh2_channel_write(channel, ssh_cmd_buffer.c_str(), ssh_cmd_buffer.size());
-                ssh_typed_chars += ssh_cmd_buffer.size();
                 ssh_cmd_buffer.clear();
                 ssh_at_line_start = false;
                 set_activity_status("[ONLINE]", 0x50FF50);
@@ -1590,7 +1569,6 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
         }
         else if ((unsigned char)key >= 1) {
             ssh_at_line_start = false;
-            ssh_typed_chars++;
             char k = key;
             ssh_write_all(&k, 1);
             return;
@@ -2082,6 +2060,9 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
             }
     } else if (key == 8 || key == 127) {
         // Backspace - delete character before cursor
+        if (cursor_pos > current_input.length()) {
+            cursor_pos = current_input.length();
+        }
         if (cursor_pos > 0 && !current_input.empty()) {
             current_input.erase(cursor_pos - 1, 1);
             cursor_pos--;
@@ -2842,7 +2823,6 @@ esp_err_t SSHTerminal::ssh_open_channel()
     libssh2_channel_set_blocking(channel, 0);
 
     ssh_at_line_start = true;
-    ssh_typed_chars = 0;
     ssh_pending_cr = false;
 
     ESP_LOGI(TAG, "SSH channel opened successfully");
@@ -2862,7 +2842,6 @@ esp_err_t SSHTerminal::disconnect()
     ssh_connected = false;
     is_local_mode_during_ssh = false;
     ssh_at_line_start = true;
-    ssh_typed_chars = 0;
     ssh_pending_cr = false;
     set_activity_status("", 0x50FF50);
     
@@ -3443,7 +3422,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                 // True lone '\r' across packet boundaries: clear current line for clean redraw
                 erase_current_line();
                 ssh_at_line_start = true;
-                ssh_typed_chars = 0;
             }
         }
 
@@ -3795,7 +3773,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     // True lone '\r': erase current line so redrawn line or progress update is written cleanly
                     erase_current_line();
                     ssh_at_line_start = true;
-                    ssh_typed_chars = 0;
                     continue;
                 }
             } else {
@@ -3809,7 +3786,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         if (ch == '\n') {
             flush_batch();
             ssh_at_line_start = true;
-            ssh_typed_chars = 0;
             int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
             const char* cur_t = lv_textarea_get_text(terminal_output);
             size_t cur_len = cur_t ? strlen(cur_t) : 0;
@@ -4494,6 +4470,7 @@ void SSHTerminal::handle_trackball_left()
 {
     if (ssh_connected && channel) {
         // Send ANSI cursor left to remote SSH shell
+        ssh_at_line_start = false;
         ssh_write_all("\033[D", 3);
     } else {
         move_cursor_left();
@@ -4504,6 +4481,7 @@ void SSHTerminal::handle_trackball_right()
 {
     if (ssh_connected && channel) {
         // Send ANSI cursor right to remote SSH shell
+        ssh_at_line_start = false;
         ssh_write_all("\033[C", 3);
     } else {
         move_cursor_right();
@@ -4755,6 +4733,7 @@ void SSHTerminal::toggle_local_shell_mode()
 void SSHTerminal::send_arrow_up()
 {
     if (ssh_connected && channel) {
+        ssh_at_line_start = false;
         ssh_write_all("\033[A", 3);
     } else {
         navigate_history(1);
@@ -4764,6 +4743,7 @@ void SSHTerminal::send_arrow_up()
 void SSHTerminal::send_arrow_down()
 {
     if (ssh_connected && channel) {
+        ssh_at_line_start = false;
         ssh_write_all("\033[B", 3);
     } else {
         navigate_history(-1);
@@ -4773,6 +4753,7 @@ void SSHTerminal::send_arrow_down()
 void SSHTerminal::send_arrow_left()
 {
     if (ssh_connected && channel) {
+        ssh_at_line_start = false;
         ssh_write_all("\033[D", 3);
     } else {
         move_cursor_left();
@@ -4782,6 +4763,7 @@ void SSHTerminal::send_arrow_left()
 void SSHTerminal::send_arrow_right()
 {
     if (ssh_connected && channel) {
+        ssh_at_line_start = false;
         ssh_write_all("\033[C", 3);
     } else {
         move_cursor_right();
