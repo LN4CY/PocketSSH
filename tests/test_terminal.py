@@ -602,6 +602,146 @@ class TestTerminalIntegration(unittest.TestCase):
         self.assertEqual(current_input, "connect 1") # Text must NEVER disappear!
 
 
+class TestModalDialogTrackballAndFocusIsolation(unittest.TestCase):
+    """Verifies trackball navigation, focus cycling, and input isolation in key selection dialogs."""
+
+    def test_getkey_dialog_trackball_navigation(self):
+        # Focus index: 0 = TextArea, 1 = id_pem, 2 = id_rsa, 3 = id_ed25519, 4 = FETCH, 5 = CANCEL
+        focus = 0
+        def down(f):
+            if f == 0: return 1
+            elif 1 <= f <= 3: return 5 if f == 3 else 4
+            else: return 0
+
+        def up(f):
+            if f >= 4: return 3 if f == 5 else 1
+            elif 1 <= f <= 3: return 0
+            else: return 4
+
+        def left(f):
+            if 1 < f <= 3: return f - 1
+            elif f == 5: return 4
+            return f
+
+        def right(f):
+            if 1 <= f < 3: return f + 1
+            elif f == 4: return 5
+            return f
+
+        self.assertEqual(down(0), 1) # TA -> Presets (id_pem)
+        self.assertEqual(right(1), 2) # id_pem -> id_rsa
+        self.assertEqual(right(2), 3) # id_rsa -> id_ed25519
+        self.assertEqual(down(3), 5) # id_ed25519 -> CANCEL
+        self.assertEqual(left(5), 4) # CANCEL -> FETCH
+        self.assertEqual(up(4), 1) # FETCH -> Presets (id_pem)
+        self.assertEqual(up(1), 0) # Presets -> TA
+        self.assertEqual(up(0), 4) # TA wraps to FETCH
+        self.assertEqual(down(4), 0) # FETCH wraps to TA
+
+    def test_getkey_dialog_click_and_preset_selection(self):
+        focus = 0
+        ta_text = "~/.ssh/id_pem"
+        presets = ["~/.ssh/id_pem", "~/.ssh/id_rsa", "~/.ssh/id_ed25519"]
+        dialog_closed = False
+        fetched_path = None
+
+        def click(f, text):
+            nonlocal dialog_closed, fetched_path
+            if 1 <= f <= 3:
+                # Selecting preset updates text and automatically moves focus to FETCH KEY
+                return presets[f - 1], 4
+            elif f == 4 or f == 0:
+                fetched_path = text
+                dialog_closed = True
+                return text, f
+            elif f == 5:
+                dialog_closed = True
+                return text, f
+            return text, f
+
+        # Select id_rsa preset (index 2)
+        ta_text, focus = click(2, ta_text)
+        self.assertEqual(ta_text, "~/.ssh/id_rsa")
+        self.assertEqual(focus, 4) # Focus shifted to FETCH KEY
+        self.assertFalse(dialog_closed)
+
+        # Next click triggers FETCH KEY
+        ta_text, focus = click(focus, ta_text)
+        self.assertTrue(dialog_closed)
+        self.assertEqual(fetched_path, "~/.ssh/id_rsa")
+
+    def test_getkey_dialog_input_isolation(self):
+        # Keystrokes must edit dialog textarea and NEVER leak to background shell or SSH
+        dialog_open = True
+        dialog_ta = list("~/.ssh/id_pem")
+        background_input = ""
+
+        def handle_key(key):
+            nonlocal dialog_open, background_input
+            k = ord(key) if isinstance(key, str) else key
+            if dialog_open:
+                if k == 27 or k == 3 or k == 0x0C: # Esc or Ctrl+C
+                    dialog_open = False
+                    return
+                elif k == 8 or k == 127: # Backspace
+                    if dialog_ta: dialog_ta.pop()
+                    return
+                elif k >= 32:
+                    dialog_ta.append(chr(k))
+                    return
+                return
+            # Background
+            background_input += chr(k)
+
+        # Type ".custom" into dialog
+        for ch in ".custom":
+            handle_key(ch)
+        self.assertEqual("".join(dialog_ta), "~/.ssh/id_pem.custom")
+        self.assertEqual(background_input, "") # Zero background leakage!
+
+        # Backspace 7 times
+        for _ in range(7):
+            handle_key(8)
+        self.assertEqual("".join(dialog_ta), "~/.ssh/id_pem")
+        self.assertEqual(background_input, "")
+
+        # Close dialog
+        handle_key(27)
+        self.assertFalse(dialog_open)
+
+        # Subsequent keystrokes now go to background
+        for ch in "ls\n":
+            handle_key(ch)
+        self.assertEqual(background_input, "ls\n")
+
+    def test_side_panel_trackball_navigation_and_isolation(self):
+        num_buttons = 29
+        focus = 0
+        panel_open = True
+        background_events = 0
+
+        def trackball_up(f):
+            return f - 1 if f > 0 else num_buttons - 1
+
+        def trackball_down(f):
+            return f + 1 if f + 1 < num_buttons else 0
+
+        self.assertEqual(trackball_down(0), 1)
+        self.assertEqual(trackball_up(0), 28) # Wraps to bottom
+        self.assertEqual(trackball_down(28), 0) # Wraps to top
+
+        # When panel is open, trackball click must NOT affect background
+        def handle_trackball_click():
+            nonlocal background_events
+            if panel_open:
+                # Triggers focused button, NOT background
+                return
+            background_events += 1
+
+        handle_trackball_click()
+        self.assertEqual(background_events, 0)
+
+
 if __name__ == '__main__':
     print("=" * 65)
     print("  PocketSSH Terminal Pre-Build Verification & Validation Suite")

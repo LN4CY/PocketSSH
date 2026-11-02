@@ -342,7 +342,11 @@ void trackball_task(void *param)
         // Detect falling edge on Up (roller movement does NOT dismiss splash screen)
         if (!up && last_up) {
             if (!splash_screen && ssh_terminal) {
-                if (ssh_terminal->is_alt_mode()) {
+                if (ssh_terminal->is_getkey_dialog_open()) {
+                    ssh_terminal->handle_getkey_trackball_up();
+                } else if (ssh_terminal->is_side_panel_open()) {
+                    ssh_terminal->handle_side_panel_trackball_up();
+                } else if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_up();
                 } else {
                     ssh_terminal->scroll_up(28);
@@ -353,7 +357,11 @@ void trackball_task(void *param)
         // Detect falling edge on Down (roller movement does NOT dismiss splash screen)
         if (!down && last_down) {
             if (!splash_screen && ssh_terminal) {
-                if (ssh_terminal->is_alt_mode()) {
+                if (ssh_terminal->is_getkey_dialog_open()) {
+                    ssh_terminal->handle_getkey_trackball_down();
+                } else if (ssh_terminal->is_side_panel_open()) {
+                    ssh_terminal->handle_side_panel_trackball_down();
+                } else if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_down();
                 } else {
                     ssh_terminal->scroll_down(28);
@@ -364,7 +372,11 @@ void trackball_task(void *param)
         // Detect falling edge on Left (roller movement does NOT dismiss splash screen)
         if (!left && last_left) {
             if (!splash_screen && ssh_terminal) {
-                if (ssh_terminal->is_alt_mode()) {
+                if (ssh_terminal->is_getkey_dialog_open()) {
+                    ssh_terminal->handle_getkey_trackball_left();
+                } else if (ssh_terminal->is_side_panel_open()) {
+                    ssh_terminal->toggle_side_panel();
+                } else if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_left();
                 } else {
                     ssh_terminal->handle_trackball_left();
@@ -375,7 +387,11 @@ void trackball_task(void *param)
         // Detect falling edge on Right (roller movement does NOT dismiss splash screen)
         if (!right && last_right) {
             if (!splash_screen && ssh_terminal) {
-                if (ssh_terminal->is_alt_mode()) {
+                if (ssh_terminal->is_getkey_dialog_open()) {
+                    ssh_terminal->handle_getkey_trackball_right();
+                } else if (ssh_terminal->is_side_panel_open()) {
+                    ssh_terminal->handle_side_panel_trackball_click();
+                } else if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_right();
                 } else {
                     ssh_terminal->handle_trackball_right();
@@ -399,7 +415,11 @@ void trackball_task(void *param)
                         dismiss_splash_screen();
                     }
                 } else if (ssh_terminal) {
-                    if (press_duration >= 400) {
+                    if (ssh_terminal->is_getkey_dialog_open()) {
+                        ssh_terminal->handle_getkey_trackball_click();
+                    } else if (ssh_terminal->is_side_panel_open()) {
+                        ssh_terminal->handle_side_panel_trackball_click();
+                    } else if (press_duration >= 400) {
                         // Long press (>400ms):
                         if (ssh_terminal->is_connected()) {
                             ESP_LOGI("TRACKBALL", "Long press in SSH (%lu ms) - sending Ctrl+C", press_duration);

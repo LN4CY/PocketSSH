@@ -102,6 +102,17 @@ public:
     void start_fetch_remote_key(const char* remote_path, const char* local_name = NULL);
     void show_getkey_dialog();
     void close_getkey_dialog();
+    bool is_getkey_dialog_open() const { return getkey_dialog != nullptr; }
+    bool is_side_panel_open() const { return m_side_panel_open; }
+    void handle_getkey_trackball_up();
+    void handle_getkey_trackball_down();
+    void handle_getkey_trackball_left();
+    void handle_getkey_trackball_right();
+    void handle_getkey_trackball_click();
+    void handle_side_panel_trackball_up();
+    void handle_side_panel_trackball_down();
+    void handle_side_panel_trackball_click();
+    void toggle_side_panel();
     bool save_key_to_sd_and_nvs(const char* keyname, const char* key_data, size_t key_len);
     bool delete_key_from_sd_and_nvs(const char* keyname);
     void save_key_to_nvs(const char* keyname, const char* key_data);
@@ -204,7 +215,6 @@ private:
     std::string strip_ansi_codes(const char* data, size_t len);
     void send_special_key(const char* sequence);
     void create_side_panel();
-    void toggle_side_panel();
     static void gesture_event_cb(lv_event_t* e);
     static void special_key_event_cb(lv_event_t* e);
     static void input_touch_event_cb(lv_event_t* e);
@@ -220,6 +230,16 @@ private:
     bool m_is_virtual_target;
     lv_obj_t* getkey_dialog;
     lv_obj_t* getkey_path_ta;
+    lv_obj_t* getkey_preset_btns[3];
+    lv_obj_t* getkey_fetch_btn;
+    lv_obj_t* getkey_cancel_btn;
+    int getkey_focus_idx;
+    void update_getkey_focus_display();
+
+    std::vector<lv_obj_t*> side_panel_btns;
+    int side_panel_focus_idx;
+    bool m_side_panel_open;
+    void update_side_panel_focus_display();
     
     static esp_err_t ensure_wifi_driver_started(SSHTerminal* terminal);
     

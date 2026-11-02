@@ -94,8 +94,16 @@ SSHTerminal::SSHTerminal()
       ssh_rx_is_paused(false),
       m_is_virtual_target(false),
       getkey_dialog(NULL),
-      getkey_path_ta(NULL)
+      getkey_path_ta(NULL),
+      getkey_fetch_btn(NULL),
+      getkey_cancel_btn(NULL),
+      getkey_focus_idx(0),
+      side_panel_focus_idx(0),
+      m_side_panel_open(false)
 {
+    getkey_preset_btns[0] = NULL;
+    getkey_preset_btns[1] = NULL;
+    getkey_preset_btns[2] = NULL;
     vTaskDelay(pdMS_TO_TICKS(100));
     
     ESP_LOGI(TAG, "Initializing battery measurement...");
@@ -1324,23 +1332,80 @@ void SSHTerminal::clear_terminal()
 
 void SSHTerminal::handle_key_input(char key, bool from_serial)
 {
-    // Dismiss Get Key modal on Esc / Ctrl+C, or submit on Enter
+    // ========================================================
+    // MODAL DIALOG 1: Get Key Modal Dialog
+    // ========================================================
     if (getkey_dialog) {
         if (key == 27 || key == 3 || (uint8_t)key == 0x0C) {
             close_getkey_dialog();
             return;
         }
-        if (key == '\r' || key == '\n') {
-            std::string path = "~/.ssh/id_pem";
-            if (getkey_path_ta && bsp_display_lock(500)) {
-                const char* t = lv_textarea_get_text(getkey_path_ta);
-                if (t && strlen(t) > 0) path = t;
+        if (key == '\t') {
+            if (bsp_display_lock(500)) {
+                getkey_focus_idx = (getkey_focus_idx + 1) % 6;
+                update_getkey_focus_display();
                 bsp_display_unlock();
             }
-            close_getkey_dialog();
-            start_fetch_remote_key(path.c_str(), NULL);
             return;
         }
+        if (key == '\r' || key == '\n') {
+            handle_getkey_trackball_click();
+            return;
+        }
+        if (key == 8 || key == 127) {
+            if (bsp_display_lock(500)) {
+                if (getkey_focus_idx != 0) {
+                    getkey_focus_idx = 0;
+                    update_getkey_focus_display();
+                }
+                if (getkey_path_ta) {
+                    lv_textarea_delete_char(getkey_path_ta);
+                }
+                bsp_display_unlock();
+            }
+            return;
+        }
+        if ((unsigned char)key >= 32) {
+            if (bsp_display_lock(500)) {
+                if (getkey_focus_idx != 0) {
+                    getkey_focus_idx = 0;
+                    update_getkey_focus_display();
+                }
+                if (getkey_path_ta) {
+                    lv_textarea_add_char(getkey_path_ta, (uint32_t)(unsigned char)key);
+                }
+                bsp_display_unlock();
+            }
+            return;
+        }
+        return;
+    }
+
+    // ========================================================
+    // MODAL DIALOG 2: Special Keys Side Panel
+    // ========================================================
+    if (is_side_panel_open()) {
+        if (key == 27 || (uint8_t)key == 0x0C) {
+            toggle_side_panel();
+            return;
+        }
+        if (key == '\r' || key == '\n' || key == ' ') {
+            handle_side_panel_trackball_click();
+            return;
+        }
+        if (key == '\t' || key == 'j' || key == 'J') {
+            handle_side_panel_trackball_down();
+            return;
+        }
+        if (key == 'k' || key == 'K') {
+            handle_side_panel_trackball_up();
+            return;
+        }
+        if (key == 'h' || key == 'H') {
+            toggle_side_panel();
+            return;
+        }
+        return;
     }
 
     // Physical Keyboard Alt+C (T-Deck coprocessor sends 0x0C) or standard Ctrl+C (0x03)
@@ -2888,17 +2953,7 @@ esp_err_t SSHTerminal::disconnect()
     
     ssh_rx_paused = false;
     ssh_rx_is_paused = false;
-    if (getkey_dialog) {
-        if (bsp_display_lock(500)) {
-            lv_obj_delete_async(getkey_dialog);
-            getkey_dialog = NULL;
-            getkey_path_ta = NULL;
-            bsp_display_unlock();
-        } else {
-            getkey_dialog = NULL;
-            getkey_path_ta = NULL;
-        }
-    }
+    close_getkey_dialog();
     
     set_ssh_ui_mode(false);
     if (had_connection) {
@@ -4087,6 +4142,7 @@ void SSHTerminal::update_terminal_display()
 
 void SSHTerminal::create_side_panel()
 {
+    side_panel_btns.clear();
     side_panel = lv_obj_create(terminal_screen);
     lv_obj_set_size(side_panel, 100, lv_pct(100));
     lv_obj_set_style_bg_color(side_panel, lv_color_hex(0x101010), 0);
@@ -4097,6 +4153,7 @@ void SSHTerminal::create_side_panel()
     lv_obj_set_scroll_dir(side_panel, LV_DIR_VER);
     lv_obj_align(side_panel, LV_ALIGN_TOP_RIGHT, 100, 0);
     lv_obj_add_flag(side_panel, LV_OBJ_FLAG_HIDDEN);
+    m_side_panel_open = false;
     
     lv_obj_t* title = lv_label_create(side_panel);
     lv_label_set_text(title, "Keys");
@@ -4120,6 +4177,7 @@ void SSHTerminal::create_side_panel()
         lv_obj_set_user_data(btn, (void*)key_seq);
         lv_obj_add_event_cb(btn, special_key_event_cb, LV_EVENT_CLICKED, this);
         
+        side_panel_btns.push_back(btn);
         return btn;
     };
 
@@ -4154,16 +4212,87 @@ void SSHTerminal::create_side_panel()
     create_key_button("Local/SSH", "TOGGLE_SHELL", 1015);
 }
 
+void SSHTerminal::update_side_panel_focus_display()
+{
+    if (!side_panel || side_panel_btns.empty()) return;
+    for (size_t i = 0; i < side_panel_btns.size(); i++) {
+        lv_obj_t* btn = side_panel_btns[i];
+        if (!btn) continue;
+        if ((int)i == side_panel_focus_idx) {
+            lv_obj_set_style_border_color(btn, lv_color_hex(0xFFFF00), 0);
+            lv_obj_set_style_border_width(btn, 2, 0);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(0x006600), 0);
+        } else {
+            lv_obj_set_style_border_color(btn, lv_color_hex(0x00FF00), 0);
+            lv_obj_set_style_border_width(btn, 1, 0);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(0x1A1A1A), 0);
+        }
+    }
+}
+
 void SSHTerminal::toggle_side_panel()
 {
     if (!side_panel) return;
+    if (!bsp_display_lock(500)) return;
     
     if (lv_obj_has_flag(side_panel, LV_OBJ_FLAG_HIDDEN)) {
         lv_obj_clear_flag(side_panel, LV_OBJ_FLAG_HIDDEN);
         lv_obj_align(side_panel, LV_ALIGN_TOP_RIGHT, 0, 0);
+        lv_obj_move_foreground(side_panel);
+        m_side_panel_open = true;
+        side_panel_focus_idx = 0;
+        update_side_panel_focus_display();
+        if (!side_panel_btns.empty()) {
+            lv_obj_scroll_to_view(side_panel_btns[0], LV_ANIM_OFF);
+        }
     } else {
         lv_obj_add_flag(side_panel, LV_OBJ_FLAG_HIDDEN);
         lv_obj_align(side_panel, LV_ALIGN_TOP_RIGHT, 100, 0);
+        m_side_panel_open = false;
+    }
+    bsp_display_unlock();
+}
+
+void SSHTerminal::handle_side_panel_trackball_up()
+{
+    if (!is_side_panel_open() || side_panel_btns.empty()) return;
+    if (!bsp_display_lock(500)) return;
+
+    if (side_panel_focus_idx > 0) {
+        side_panel_focus_idx--;
+    } else {
+        side_panel_focus_idx = (int)side_panel_btns.size() - 1;
+    }
+    update_side_panel_focus_display();
+    lv_obj_scroll_to_view(side_panel_btns[side_panel_focus_idx], LV_ANIM_ON);
+
+    bsp_display_unlock();
+}
+
+void SSHTerminal::handle_side_panel_trackball_down()
+{
+    if (!is_side_panel_open() || side_panel_btns.empty()) return;
+    if (!bsp_display_lock(500)) return;
+
+    if (side_panel_focus_idx + 1 < (int)side_panel_btns.size()) {
+        side_panel_focus_idx++;
+    } else {
+        side_panel_focus_idx = 0;
+    }
+    update_side_panel_focus_display();
+    lv_obj_scroll_to_view(side_panel_btns[side_panel_focus_idx], LV_ANIM_ON);
+
+    bsp_display_unlock();
+}
+
+void SSHTerminal::handle_side_panel_trackball_click()
+{
+    if (!is_side_panel_open() || side_panel_btns.empty()) return;
+    if (side_panel_focus_idx >= 0 && side_panel_focus_idx < (int)side_panel_btns.size()) {
+        lv_obj_t* btn = side_panel_btns[side_panel_focus_idx];
+        if (btn) {
+            lv_obj_send_event(btn, LV_EVENT_CLICKED, NULL);
+        }
     }
 }
 
@@ -4888,10 +5017,173 @@ void SSHTerminal::close_getkey_dialog()
             lv_obj_delete_async(getkey_dialog);
             getkey_dialog = NULL;
             getkey_path_ta = NULL;
+            getkey_preset_btns[0] = NULL;
+            getkey_preset_btns[1] = NULL;
+            getkey_preset_btns[2] = NULL;
+            getkey_fetch_btn = NULL;
+            getkey_cancel_btn = NULL;
+            getkey_focus_idx = 0;
             bsp_display_unlock();
         } else {
             getkey_dialog = NULL;
             getkey_path_ta = NULL;
+            getkey_preset_btns[0] = NULL;
+            getkey_preset_btns[1] = NULL;
+            getkey_preset_btns[2] = NULL;
+            getkey_fetch_btn = NULL;
+            getkey_cancel_btn = NULL;
+            getkey_focus_idx = 0;
+        }
+    }
+}
+
+void SSHTerminal::update_getkey_focus_display()
+{
+    if (!getkey_dialog) return;
+
+    // 0: Text Area
+    if (getkey_path_ta) {
+        if (getkey_focus_idx == 0) {
+            lv_obj_set_style_border_color(getkey_path_ta, lv_color_hex(0xFFFF00), 0);
+            lv_obj_set_style_border_width(getkey_path_ta, 2, 0);
+            lv_obj_set_style_bg_color(getkey_path_ta, lv_color_hex(0x183518), 0);
+        } else {
+            lv_obj_set_style_border_color(getkey_path_ta, lv_color_hex(0x00AA00), 0);
+            lv_obj_set_style_border_width(getkey_path_ta, 1, 0);
+            lv_obj_set_style_bg_color(getkey_path_ta, lv_color_hex(0x102010), 0);
+        }
+    }
+
+    // 1..3: Preset buttons
+    for (int i = 0; i < 3; i++) {
+        if (getkey_preset_btns[i]) {
+            if (getkey_focus_idx == i + 1) {
+                lv_obj_set_style_border_color(getkey_preset_btns[i], lv_color_hex(0xFFFF00), 0);
+                lv_obj_set_style_border_width(getkey_preset_btns[i], 2, 0);
+                lv_obj_set_style_bg_color(getkey_preset_btns[i], lv_color_hex(0x006600), 0);
+            } else {
+                lv_obj_set_style_border_color(getkey_preset_btns[i], lv_color_hex(0x00FF00), 0);
+                lv_obj_set_style_border_width(getkey_preset_btns[i], 1, 0);
+                lv_obj_set_style_bg_color(getkey_preset_btns[i], lv_color_hex(0x152515), 0);
+            }
+        }
+    }
+
+    // 4: FETCH KEY button
+    if (getkey_fetch_btn) {
+        if (getkey_focus_idx == 4) {
+            lv_obj_set_style_border_color(getkey_fetch_btn, lv_color_hex(0xFFFF00), 0);
+            lv_obj_set_style_border_width(getkey_fetch_btn, 3, 0);
+            lv_obj_set_style_bg_color(getkey_fetch_btn, lv_color_hex(0x008800), 0);
+        } else {
+            lv_obj_set_style_border_color(getkey_fetch_btn, lv_color_hex(0x00FF00), 0);
+            lv_obj_set_style_border_width(getkey_fetch_btn, 2, 0);
+            lv_obj_set_style_bg_color(getkey_fetch_btn, lv_color_hex(0x103510), 0);
+        }
+    }
+
+    // 5: CANCEL button
+    if (getkey_cancel_btn) {
+        if (getkey_focus_idx == 5) {
+            lv_obj_set_style_border_color(getkey_cancel_btn, lv_color_hex(0xFFFF00), 0);
+            lv_obj_set_style_border_width(getkey_cancel_btn, 3, 0);
+            lv_obj_set_style_bg_color(getkey_cancel_btn, lv_color_hex(0x661515), 0);
+        } else {
+            lv_obj_set_style_border_color(getkey_cancel_btn, lv_color_hex(0xFF4040), 0);
+            lv_obj_set_style_border_width(getkey_cancel_btn, 1, 0);
+            lv_obj_set_style_bg_color(getkey_cancel_btn, lv_color_hex(0x351010), 0);
+        }
+    }
+}
+
+void SSHTerminal::handle_getkey_trackball_down()
+{
+    if (!getkey_dialog) return;
+    if (!bsp_display_lock(500)) return;
+
+    if (getkey_focus_idx == 0) {
+        getkey_focus_idx = 1;
+    } else if (getkey_focus_idx >= 1 && getkey_focus_idx <= 3) {
+        if (getkey_focus_idx == 3) getkey_focus_idx = 5;
+        else getkey_focus_idx = 4;
+    } else {
+        getkey_focus_idx = 0;
+    }
+    update_getkey_focus_display();
+
+    bsp_display_unlock();
+}
+
+void SSHTerminal::handle_getkey_trackball_up()
+{
+    if (!getkey_dialog) return;
+    if (!bsp_display_lock(500)) return;
+
+    if (getkey_focus_idx >= 4) {
+        if (getkey_focus_idx == 5) getkey_focus_idx = 3;
+        else getkey_focus_idx = 1;
+    } else if (getkey_focus_idx >= 1 && getkey_focus_idx <= 3) {
+        getkey_focus_idx = 0;
+    } else {
+        getkey_focus_idx = 4;
+    }
+    update_getkey_focus_display();
+
+    bsp_display_unlock();
+}
+
+void SSHTerminal::handle_getkey_trackball_left()
+{
+    if (!getkey_dialog) return;
+    if (!bsp_display_lock(500)) return;
+
+    if (getkey_focus_idx == 0) {
+        if (getkey_path_ta) lv_textarea_cursor_left(getkey_path_ta);
+    } else if (getkey_focus_idx > 1 && getkey_focus_idx <= 3) {
+        getkey_focus_idx--;
+        update_getkey_focus_display();
+    } else if (getkey_focus_idx == 5) {
+        getkey_focus_idx = 4;
+        update_getkey_focus_display();
+    }
+
+    bsp_display_unlock();
+}
+
+void SSHTerminal::handle_getkey_trackball_right()
+{
+    if (!getkey_dialog) return;
+    if (!bsp_display_lock(500)) return;
+
+    if (getkey_focus_idx == 0) {
+        if (getkey_path_ta) lv_textarea_cursor_right(getkey_path_ta);
+    } else if (getkey_focus_idx >= 1 && getkey_focus_idx < 3) {
+        getkey_focus_idx++;
+        update_getkey_focus_display();
+    } else if (getkey_focus_idx == 4) {
+        getkey_focus_idx = 5;
+        update_getkey_focus_display();
+    }
+
+    bsp_display_unlock();
+}
+
+void SSHTerminal::handle_getkey_trackball_click()
+{
+    if (!getkey_dialog) return;
+
+    if (getkey_focus_idx >= 1 && getkey_focus_idx <= 3) {
+        int preset_idx = getkey_focus_idx - 1;
+        if (getkey_preset_btns[preset_idx]) {
+            lv_obj_send_event(getkey_preset_btns[preset_idx], LV_EVENT_CLICKED, NULL);
+        }
+    } else if (getkey_focus_idx == 4 || getkey_focus_idx == 0) {
+        if (getkey_fetch_btn) {
+            lv_obj_send_event(getkey_fetch_btn, LV_EVENT_CLICKED, NULL);
+        }
+    } else if (getkey_focus_idx == 5) {
+        if (getkey_cancel_btn) {
+            lv_obj_send_event(getkey_cancel_btn, LV_EVENT_CLICKED, NULL);
         }
     }
 }
@@ -4905,6 +5197,11 @@ void SSHTerminal::show_getkey_dialog()
         lv_obj_del(getkey_dialog);
         getkey_dialog = NULL;
         getkey_path_ta = NULL;
+        getkey_preset_btns[0] = NULL;
+        getkey_preset_btns[1] = NULL;
+        getkey_preset_btns[2] = NULL;
+        getkey_fetch_btn = NULL;
+        getkey_cancel_btn = NULL;
     }
 
     getkey_dialog = lv_obj_create(terminal_screen);
@@ -4947,7 +5244,7 @@ void SSHTerminal::show_getkey_dialog()
     lv_obj_set_style_text_font(preset_lbl, &lv_font_montserrat_10, 0);
     lv_obj_align(preset_lbl, LV_ALIGN_TOP_LEFT, 4, 72);
 
-    auto make_preset_btn = [this](const char* label, const char* path, int x_pos) {
+    auto make_preset_btn = [this](const char* label, const char* path, int x_pos) -> lv_obj_t* {
         lv_obj_t* b = lv_btn_create(getkey_dialog);
         lv_obj_set_size(b, 84, 26);
         lv_obj_align(b, LV_ALIGN_TOP_LEFT, x_pos, 88);
@@ -4969,13 +5266,16 @@ void SSHTerminal::show_getkey_dialog()
             const char* p = (const char*)lv_obj_get_user_data(btn);
             if (term && term->getkey_path_ta && p) {
                 lv_textarea_set_text(term->getkey_path_ta, p);
+                term->getkey_focus_idx = 4;
+                term->update_getkey_focus_display();
             }
         }, LV_EVENT_CLICKED, this);
+        return b;
     };
 
-    make_preset_btn("id_pem", "~/.ssh/id_pem", 4);
-    make_preset_btn("id_rsa", "~/.ssh/id_rsa", 94);
-    make_preset_btn("id_ed25519", "~/.ssh/id_ed25519", 184);
+    getkey_preset_btns[0] = make_preset_btn("id_pem", "~/.ssh/id_pem", 4);
+    getkey_preset_btns[1] = make_preset_btn("id_rsa", "~/.ssh/id_rsa", 94);
+    getkey_preset_btns[2] = make_preset_btn("id_ed25519", "~/.ssh/id_ed25519", 184);
 
     lv_obj_t* fetch_btn = lv_btn_create(getkey_dialog);
     lv_obj_set_size(fetch_btn, 130, 32);
@@ -4997,11 +5297,7 @@ void SSHTerminal::show_getkey_dialog()
         if (term && term->getkey_path_ta) {
             std::string path = lv_textarea_get_text(term->getkey_path_ta);
             if (path.empty()) path = "~/.ssh/id_pem";
-            if (term->getkey_dialog) {
-                lv_obj_delete_async(term->getkey_dialog);
-                term->getkey_dialog = NULL;
-                term->getkey_path_ta = NULL;
-            }
+            term->close_getkey_dialog();
             term->start_fetch_remote_key(path.c_str(), NULL);
         }
     }, LV_EVENT_CLICKED, this);
@@ -5023,12 +5319,15 @@ void SSHTerminal::show_getkey_dialog()
 
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
         SSHTerminal* term = (SSHTerminal*)lv_event_get_user_data(e);
-        if (term && term->getkey_dialog) {
-            lv_obj_delete_async(term->getkey_dialog);
-            term->getkey_dialog = NULL;
-            term->getkey_path_ta = NULL;
+        if (term) {
+            term->close_getkey_dialog();
         }
     }, LV_EVENT_CLICKED, this);
+
+    getkey_fetch_btn = fetch_btn;
+    getkey_cancel_btn = cancel_btn;
+    getkey_focus_idx = 0;
+    update_getkey_focus_display();
 
     lv_obj_move_foreground(getkey_dialog);
     bsp_display_unlock();
