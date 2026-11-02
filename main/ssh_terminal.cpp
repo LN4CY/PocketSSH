@@ -2821,7 +2821,7 @@ esp_err_t SSHTerminal::ssh_open_channel()
     };
     while ((rc = libssh2_channel_request_pty_ex(channel, term_type, (unsigned int)strlen(term_type),
                                                 pty_modes, sizeof(pty_modes),
-                                                46, 24, 320, 240)) == LIBSSH2_ERROR_EAGAIN) {
+                                                52, 17, 320, 211)) == LIBSSH2_ERROR_EAGAIN) {
         waitsocket(ssh_socket, session);
     }
     
@@ -3431,18 +3431,29 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         }
     };
 
+    auto move_cursor_to_sol = [this]() {
+        if (!terminal_output) return;
+        const char* cur_t = lv_textarea_get_text(terminal_output);
+        if (!cur_t || cur_t[0] == '\0') return;
+        int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
+        size_t tlen = strlen(cur_t);
+        if (cpos > (int32_t)tlen) cpos = (int32_t)tlen;
+        if (cpos < 0) cpos = 0;
+        int32_t sol = 0;
+        for (int32_t k = cpos - 1; k >= 0; k--) {
+            if (cur_t[k] == '\n') {
+                sol = k + 1;
+                break;
+            }
+        }
+        lv_textarea_set_cursor_pos(terminal_output, sol);
+    };
+
     for (size_t i = 0; i < len; i++) {
         char ch = data[i];
 
         if (ssh_pending_cr) {
             ssh_pending_cr = false;
-            if (ch == '\n') {
-                // CRLF across packet boundaries: proceed with '\n'
-            } else {
-                // True lone '\r' across packet boundaries: clear current line for clean redraw
-                erase_current_line();
-                ssh_at_line_start = true;
-            }
         }
 
         // 1. ANSI Escape sequences
@@ -3784,15 +3795,14 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
             flush_batch();
             s_utf8_expected = 0;
             s_utf8_len = 0;
+            move_cursor_to_sol();
             if (i + 1 < len) {
                 if (data[i + 1] == '\n') {
                     i++;
                     ch = '\n';
                     // Fall through to handle '\n'
                 } else {
-                    // True lone '\r': erase current line so redrawn line or progress update is written cleanly
-                    erase_current_line();
-                    ssh_at_line_start = true;
+                    // True lone '\r': cursor repositioned to start of line (non-destructive)
                     continue;
                 }
             } else {

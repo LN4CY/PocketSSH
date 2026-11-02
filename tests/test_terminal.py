@@ -466,27 +466,44 @@ class TestTerminalIntegration(unittest.TestCase):
         self.assertEqual(len(sent_to_server), 9) # Nothing sent to server while in escape mode
 
     def test_carriage_return_lone_replaces_active_line(self):
-        # Simulates progress updates with lone \r
-        lines = [""]
+        # Simulates realistic terminal overwrite behavior on lone \r
+        lines = [list()]
+        cpos = 0
         def process_stream(data):
-            nonlocal lines
+            nonlocal lines, cpos
             i = 0
             while i < len(data):
                 ch = data[i]
                 if ch == '\r':
+                    cpos = 0 # Non-destructive return to column 0
                     if i + 1 < len(data) and data[i + 1] == '\n':
                         i += 1
-                        lines.append("")
-                    else:
-                        lines[-1] = "" # Lone \r replaces current line
+                        lines.append(list())
+                        cpos = 0
                 elif ch == '\n':
-                    lines.append("")
+                    lines.append(list())
+                    cpos = 0
                 else:
-                    lines[-1] += ch
+                    if cpos < len(lines[-1]):
+                        lines[-1][cpos] = ch # Overwrite mode
+                    else:
+                        lines[-1].append(ch) # Append mode
+                    cpos += 1
                 i += 1
 
         process_stream("Task: 10%\rTask: 20%\rTask: 100%\r\nDone!")
-        self.assertEqual(lines, ["Task: 100%", "Done!"])
+        rendered = ["".join(l) for l in lines]
+        self.assertEqual(rendered, ["Task: 100%", "Done!"])
+
+        # Test command line wrapping: first line must NOT be wiped out
+        lines = [list()]
+        cpos = 0
+        process_stream("user@server:~$ sudo apt install -y build-essential\r\ngcc g++ make")
+        rendered = ["".join(l) for l in lines]
+        self.assertEqual(rendered, [
+            "user@server:~$ sudo apt install -y build-essential",
+            "gcc g++ make"
+        ])
 
     def test_cursor_movement_skips_color_tags(self):
         # Tag format: #RRGGBB (8 bytes) and # (1 byte)
