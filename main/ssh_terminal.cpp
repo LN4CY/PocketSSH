@@ -862,7 +862,7 @@ void SSHTerminal::send_interrupt()
 void SSHTerminal::set_activity_status(const char* text, uint32_t color_hex)
 {
     if (!activity_label) return;
-    if (bsp_display_lock(pdMS_TO_TICKS(50))) {
+    if (bsp_display_lock(500)) {
         lv_label_set_text(activity_label, text ? text : "");
         lv_obj_set_style_text_color(activity_label, lv_color_hex(color_hex), 0);
         bsp_display_unlock();
@@ -1204,7 +1204,7 @@ void SSHTerminal::append_text(const char* text)
         return;
     }
     
-    if (!bsp_display_lock(pdMS_TO_TICKS(500))) {
+    if (!bsp_display_lock(1500)) {
         ESP_LOGW(TAG, "append_text could not acquire display lock");
         return;
     }
@@ -1259,7 +1259,7 @@ void SSHTerminal::append_text(const char* text)
 void SSHTerminal::clear_terminal()
 {
     if (terminal_output) {
-        if (bsp_display_lock(pdMS_TO_TICKS(200))) {
+        if (bsp_display_lock(1000)) {
             lv_textarea_set_text(terminal_output, "");
             is_user_scrolled_back = false;
             update_scroll_indicator();
@@ -1967,7 +1967,7 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                 static bool s_inverted = false;
                 s_inverted = !s_inverted;
                 bsp_display_invert_color(s_inverted);
-                if (bsp_display_lock(pdMS_TO_TICKS(100))) {
+                if (bsp_display_lock(500)) {
                     lv_obj_invalidate(lv_scr_act());
                     bsp_display_unlock();
                 }
@@ -2013,7 +2013,7 @@ void SSHTerminal::update_input_display()
         return;
     }
     
-    if (!bsp_display_lock(pdMS_TO_TICKS(100))) {
+    if (!bsp_display_lock(500)) {
         return;
     }
     
@@ -2116,10 +2116,7 @@ void SSHTerminal::battery_update_cb(lv_timer_t* timer)
 {
     SSHTerminal* terminal = (SSHTerminal*)lv_timer_get_user_data(timer);
     if (terminal) {
-        if (bsp_display_lock(0)) {
-            terminal->update_status_bar();
-            bsp_display_unlock();
-        }
+        terminal->update_status_bar();
     }
 }
 
@@ -2768,7 +2765,7 @@ esp_err_t SSHTerminal::disconnect()
     ssh_rx_paused = false;
     ssh_rx_is_paused = false;
     if (getkey_dialog) {
-        if (bsp_display_lock(pdMS_TO_TICKS(100))) {
+        if (bsp_display_lock(500)) {
             if (lv_obj_is_valid(getkey_dialog)) {
                 lv_obj_del(getkey_dialog);
             }
@@ -2801,7 +2798,7 @@ void SSHTerminal::send_command(const char* cmd)
     }
     
     bytes_received = 0;
-    if (byte_counter_label && bsp_display_lock(0)) {
+    if (byte_counter_label && bsp_display_lock(500)) {
         lv_label_set_text(byte_counter_label, "0 B");
         bsp_display_unlock();
     }
@@ -3231,7 +3228,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 {
     bytes_received += len;
     
-    if (!bsp_display_lock(pdMS_TO_TICKS(500))) {
+    if (!bsp_display_lock(1500)) {
         return;
     }
 
@@ -3757,7 +3754,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
     bsp_display_unlock();
 
     // Update byte counter
-    if (bytes_received > 0 && byte_counter_label && bsp_display_lock(0)) {
+    if (bytes_received > 0 && byte_counter_label && bsp_display_lock(500)) {
         char counter_text[32];
         if (bytes_received < 1024) {
             snprintf(counter_text, sizeof(counter_text), "%zu B", bytes_received);
@@ -3773,7 +3770,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 
 void SSHTerminal::flush_display_buffer()
 {
-    if (!bsp_display_lock(pdMS_TO_TICKS(50))) {
+    if (!bsp_display_lock(500)) {
         return;
     }
     if (terminal_output && !is_user_scrolled_back) {
@@ -3786,7 +3783,7 @@ void SSHTerminal::update_status_bar()
 {
     if (!status_bar) return;
     
-    if (!bsp_display_lock(pdMS_TO_TICKS(100))) {
+    if (!bsp_display_lock(500)) {
         return;
     }
 
@@ -4141,7 +4138,7 @@ std::vector<std::string> SSHTerminal::get_loaded_key_names()
 void SSHTerminal::scroll_up(int32_t pixels)
 {
     if (!terminal_output) return;
-    if (!bsp_display_lock(pdMS_TO_TICKS(100))) return;
+    if (!bsp_display_lock(500)) return;
     
     // In LVGL: positive dy in lv_obj_scroll_by_bounded scrolls UP towards the top
     lv_obj_scroll_by_bounded(terminal_output, 0, pixels, LV_ANIM_OFF);
@@ -4153,7 +4150,7 @@ void SSHTerminal::scroll_up(int32_t pixels)
 void SSHTerminal::scroll_down(int32_t pixels)
 {
     if (!terminal_output) return;
-    if (!bsp_display_lock(pdMS_TO_TICKS(100))) return;
+    if (!bsp_display_lock(500)) return;
     
     // In LVGL: negative dy in lv_obj_scroll_by_bounded scrolls DOWN towards the bottom
     lv_obj_scroll_by_bounded(terminal_output, 0, -pixels, LV_ANIM_OFF);
@@ -4175,7 +4172,7 @@ void SSHTerminal::scroll_page_down()
 void SSHTerminal::scroll_to_top()
 {
     if (!terminal_output) return;
-    if (!bsp_display_lock(pdMS_TO_TICKS(100))) return;
+    if (!bsp_display_lock(500)) return;
     
     lv_obj_scroll_to_y(terminal_output, 0, LV_ANIM_OFF);
     update_scroll_indicator();
@@ -4186,7 +4183,7 @@ void SSHTerminal::scroll_to_top()
 void SSHTerminal::scroll_to_bottom()
 {
     if (!terminal_output) return;
-    if (!bsp_display_lock(pdMS_TO_TICKS(100))) return;
+    if (!bsp_display_lock(500)) return;
     
     lv_obj_scroll_to_y(terminal_output, LV_COORD_MAX, LV_ANIM_OFF);
     is_user_scrolled_back = false;
@@ -4198,7 +4195,7 @@ void SSHTerminal::scroll_to_bottom()
 bool SSHTerminal::is_scrolled_back()
 {
     if (!terminal_output) return false;
-    if (!bsp_display_lock(pdMS_TO_TICKS(50))) return is_user_scrolled_back;
+    if (!bsp_display_lock(500)) return is_user_scrolled_back;
     int32_t bottom = lv_obj_get_scroll_bottom(terminal_output);
     bsp_display_unlock();
     return (bottom > 20);
@@ -4449,7 +4446,7 @@ void SSHTerminal::toggle_alt_mode()
 void SSHTerminal::set_alt_mode(bool enable)
 {
     alt_mode = enable;
-    if (bsp_display_lock(pdMS_TO_TICKS(100))) {
+    if (bsp_display_lock(500)) {
         if (alt_mode) {
             if (alt_btn) {
                 lv_obj_set_style_bg_color(alt_btn, lv_color_hex(0x403000), 0);
@@ -4608,7 +4605,7 @@ void SSHTerminal::start_fetch_remote_key(const char* remote_path, const char* lo
 void SSHTerminal::show_getkey_dialog()
 {
     if (!terminal_screen) return;
-    if (!bsp_display_lock(pdMS_TO_TICKS(200))) return;
+    if (!bsp_display_lock(1000)) return;
 
     if (getkey_dialog && lv_obj_is_valid(getkey_dialog)) {
         lv_obj_del(getkey_dialog);
@@ -5381,7 +5378,7 @@ void SSHTerminal::handle_tab_completion()
 void SSHTerminal::set_ssh_ui_mode(bool ssh_active)
 {
     if (!terminal_screen || !terminal_output || !input_container) return;
-    if (!bsp_display_lock(pdMS_TO_TICKS(200))) return;
+    if (!bsp_display_lock(1000)) return;
 
     if (ssh_active) {
         // Full Interactive Desktop SSH Mode: hide bottom local bar and expand terminal

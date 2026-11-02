@@ -76,7 +76,7 @@ void dismiss_splash_screen()
 {
     if (!splash_screen) return;
 
-    bool locked = bsp_display_lock(pdMS_TO_TICKS(500));
+    bool locked = bsp_display_lock(500);
     if (locked) {
         if (splash_timer) {
             lv_timer_delete(splash_timer);
@@ -753,6 +753,7 @@ extern "C" void app_main(void)
 
         // Show splash screen animation
         show_splash_screen();
+        bsp_display_unlock();
     } else {
         ESP_LOGI(TAG, "Virtual Target (QEMU) detected: running Headless Serial Terminal");
     }
@@ -773,7 +774,9 @@ extern "C" void app_main(void)
     }
     load_ssh_keys_from_sd(ssh_terminal);
     if (disp) {
+        bsp_display_lock(0);
         ssh_screen = ssh_terminal->create_terminal_screen();
+        bsp_display_unlock();
     }
     
     // Display version and initial instructions
@@ -822,9 +825,7 @@ extern "C" void app_main(void)
     // Update status bar to show initial battery voltage
     ssh_terminal->update_status_bar();
 
-    if (disp) {
-        bsp_display_unlock();
-    } else {
+    if (!disp) {
         ssh_terminal->append_text("> ");
     }
 

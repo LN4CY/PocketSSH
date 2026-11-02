@@ -688,7 +688,14 @@ static lv_indev_t *bsp_display_indev_init(lv_display_t *disp)
 lv_display_t *bsp_display_start(void)
 {
     bsp_display_cfg_t cfg = {
-        .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG()
+        .lvgl_port_cfg = {
+            .task_priority = 4,
+            .task_stack = 8192,
+            .task_affinity = 1,       // Pin to CPU 1 (APP_CPU) to prevent starving IDLE0 on CPU 0
+            .task_max_sleep_ms = 500,
+            .task_stack_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT,
+            .timer_period_ms = 10,    // 10ms (100Hz) refresh resolution gives breathing room
+        }
     };
     return bsp_display_start_with_config(&cfg);
 }
