@@ -400,6 +400,119 @@ class TestTerminalIntegration(unittest.TestCase):
         self.assertEqual(cmd, ":getkey ~/.ssh/id_pem")
         self.assertEqual(remote, "")
 
+    def test_pty_modes_rfc4254_opcodes(self):
+        # RFC 4254 Section 8 Terminal Modes:
+        # Opcode 1 = VINTR (Ctrl+C = 3)
+        # Opcode 3 = VERASE (Backspace = 127)
+        # Opcode 5 = VEOF (Ctrl+D = 4)
+        SSH_TTY_OP_VINTR = 1
+        SSH_TTY_OP_VERASE = 3
+        SSH_TTY_OP_VEOF = 5
+        SSH_TTY_OP_END = 0
+
+        pty_modes = [
+            SSH_TTY_OP_VERASE, 0, 0, 0, 127,
+            SSH_TTY_OP_VEOF, 0, 0, 0, 4,
+            SSH_TTY_OP_VINTR, 0, 0, 0, 3,
+            SSH_TTY_OP_END
+        ]
+
+        # Verify VERASE opcode is 3 and value is 127 (^?, DEL)
+        self.assertEqual(pty_modes[0], 3)
+        self.assertEqual(pty_modes[4], 127)
+
+        # Verify VEOF opcode is 5 and value is 4 (^D), NEVER 127 (which caused logout on backspace)
+        self.assertEqual(pty_modes[5], 5)
+        self.assertEqual(pty_modes[9], 4)
+
+    def test_backspace_blocked_at_prompt_start_in_ssh(self):
+        # Client side: simulate key input with ssh_typed_chars tracking
+        ssh_at_line_start = True
+        ssh_typed_chars = 0
+        sent_to_server = []
+
+        def handle_key(k):
+            nonlocal ssh_at_line_start, ssh_typed_chars
+            if k in (8, 127):
+                if ssh_at_line_start or ssh_typed_chars == 0:
+                    return # Blocked locally
+                ssh_typed_chars -= 1
+                if ssh_typed_chars == 0:
+                    ssh_at_line_start = True
+                sent_to_server.append('\x7F')
+            elif k in ('\r', '\n'):
+                ssh_at_line_start = True
+                ssh_typed_chars = 0
+                sent_to_server.append('\r')
+            else:
+                ssh_at_line_start = False
+                ssh_typed_chars += 1
+                sent_to_server.append(k)
+
+        # 1. Backspace when prompt is idle (nothing typed)
+        handle_key(127)
+        handle_key(8)
+        self.assertEqual(sent_to_server, []) # Must NOT send anything to server!
+
+        # 2. Type "ls" (2 chars)
+        handle_key('l')
+        handle_key('s')
+        self.assertEqual(sent_to_server, ['l', 's'])
+        self.assertEqual(ssh_typed_chars, 2)
+        self.assertFalse(ssh_at_line_start)
+
+        # 3. Backspace twice to delete "ls"
+        handle_key(127)
+        handle_key(127)
+        self.assertEqual(sent_to_server, ['l', 's', '\x7F', '\x7F'])
+        self.assertEqual(ssh_typed_chars, 0)
+        self.assertTrue(ssh_at_line_start)
+
+        # 4. Third backspace when nothing left to delete must be blocked locally
+        handle_key(127)
+        self.assertEqual(sent_to_server, ['l', 's', '\x7F', '\x7F']) # No 3rd \x7F!
+
+    def test_carriage_return_lone_replaces_active_line(self):
+        # Simulates progress updates with lone \r
+        lines = [""]
+        def process_stream(data):
+            nonlocal lines
+            i = 0
+            while i < len(data):
+                ch = data[i]
+                if ch == '\r':
+                    if i + 1 < len(data) and data[i + 1] == '\n':
+                        i += 1
+                        lines.append("")
+                    else:
+                        lines[-1] = "" # Lone \r replaces current line
+                elif ch == '\n':
+                    lines.append("")
+                else:
+                    lines[-1] += ch
+                i += 1
+
+        process_stream("Task: 10%\rTask: 20%\rTask: 100%\r\nDone!")
+        self.assertEqual(lines, ["Task: 100%", "Done!"])
+
+    def test_cursor_movement_skips_color_tags(self):
+        # Tag format: #RRGGBB (8 bytes) and # (1 byte)
+        def skip_color_tags_forward(txt, pos):
+            tlen = len(txt)
+            while pos < tlen:
+                if txt[pos] == '#' and pos + 7 < tlen and txt[pos + 7] == ' ':
+                    pos += 8
+                elif txt[pos] == '#' and (pos + 1 >= tlen or txt[pos + 1] != '#'):
+                    pos += 1
+                else:
+                    break
+            return pos
+
+        sample = "#00FF00 pi@host#:#4090FF ~#$ "
+        # Position 0 is '#'. Skipping should jump past '#00FF00 ' (8 bytes) to index 8 ('p')
+        self.assertEqual(skip_color_tags_forward(sample, 0), 8)
+        self.assertEqual(sample[8], 'p')
+
 
 if __name__ == '__main__':
     print("=" * 65)

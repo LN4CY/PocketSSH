@@ -149,6 +149,8 @@ private:
     std::string current_input;
     std::string ssh_cmd_buffer;
     bool ssh_at_line_start;
+    size_t ssh_typed_chars;
+    bool ssh_pending_cr;
     bool is_local_mode_during_ssh;
     void process_escape_command(const std::string& raw_cmd);
     size_t cursor_pos;
