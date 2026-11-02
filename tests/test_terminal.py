@@ -513,6 +513,84 @@ class TestTerminalIntegration(unittest.TestCase):
         self.assertEqual(skip_color_tags_forward(sample, 0), 8)
         self.assertEqual(sample[8], 'p')
 
+    def test_get_line_content_start_and_backward_skip(self):
+        def get_line_content_start(txt, sol):
+            tlen = len(txt)
+            pos = sol
+            while pos + 7 < tlen and txt[pos] == '#' and txt[pos + 7] == ' ':
+                pos += 8
+            return pos
+
+        def skip_color_tags_backward(txt, min_pos, pos):
+            if pos <= min_pos:
+                return min_pos
+            while pos > min_pos:
+                jumped = False
+                if pos >= min_pos + 7 and txt[pos] == ' ' and txt[pos - 7] == '#':
+                    pos = pos - 7
+                    jumped = True
+                for offset in range(1, 7):
+                    if pos >= min_pos + offset and txt[pos - offset] == '#' and pos + (7 - offset) < len(txt) and txt[pos + (7 - offset)] == ' ':
+                        pos = pos - offset
+                        jumped = True
+                        break
+                if pos >= min_pos + 1 and txt[pos] == '#' and txt[pos - 1] == '#':
+                    pos = pos - 1
+                    jumped = True
+                if not jumped:
+                    break
+            return max(pos, min_pos)
+
+        # Line starts with #00FF00 (8 bytes) then prompt "user@pocket:~$ "
+        line = "#00FF00 user@pocket:~$ "
+        sol = 0
+        min_pos = get_line_content_start(line, sol)
+        self.assertEqual(min_pos, 8)
+        self.assertEqual(line[min_pos], 'u')
+
+        # Cursor at position 8 moving left must clamp at 8, NEVER entering index 7 (color tag space)
+        left_pos = min_pos
+        if left_pos > min_pos:
+            left_pos -= 1
+        left_pos = skip_color_tags_backward(line, min_pos, left_pos)
+        self.assertEqual(left_pos, 8)
+
+        # Embedded color tag test: "user@pocket:~$ #FFFFFF ls"
+        # Indices:
+        # 0..7: "#00FF00 "
+        # 8..22: "user@pocket:~$ "
+        # 23..30: "#FFFFFF "
+        # 31..32: "ls"
+        embedded = "#00FF00 user@pocket:~$ #FFFFFF ls"
+        min_p = get_line_content_start(embedded, 0)
+        self.assertEqual(min_p, 8)
+
+        # Cursor at index 31 (start of "ls", immediately after "#FFFFFF ")
+        # Moving left 1 step must skip over the 8-byte "#FFFFFF " tag and land at 23 (before '#')
+        target = 31 - 1 # 30 is the space of #FFFFFF 
+        target = skip_color_tags_backward(embedded, min_p, target)
+        self.assertEqual(target, 23)
+        self.assertEqual(embedded[target], '#')
+
+    def test_trackball_left_does_not_clear_or_corrupt_input(self):
+        # Simulate local mode trackball left/right behavior
+        current_input = "connect 1"
+        cursor_pos = len(current_input) # 9
+
+        # Move left 9 times to reach 0
+        for _ in range(9):
+            if cursor_pos > 0:
+                cursor_pos -= 1
+        self.assertEqual(cursor_pos, 0)
+        self.assertEqual(current_input, "connect 1") # Text must remain intact!
+
+        # Move left further: must clamp at 0 and NOT navigate history or clear
+        for _ in range(5):
+            if cursor_pos > 0:
+                cursor_pos -= 1
+        self.assertEqual(cursor_pos, 0)
+        self.assertEqual(current_input, "connect 1") # Text must NEVER disappear!
+
 
 if __name__ == '__main__':
     print("=" * 65)

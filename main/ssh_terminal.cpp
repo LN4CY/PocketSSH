@@ -1298,6 +1298,7 @@ void SSHTerminal::append_text(const char* text)
         lv_obj_scroll_to_y(terminal_output, LV_COORD_MAX, LV_ANIM_OFF);
         is_user_scrolled_back = false;
     }
+    lv_obj_scroll_to_x(terminal_output, 0, LV_ANIM_OFF);
     
     update_scroll_indicator();
     
@@ -2122,7 +2123,31 @@ void SSHTerminal::update_input_display()
     
     lv_obj_t* container = lv_obj_get_parent(input_label);
     if (container) {
-        lv_obj_scroll_to_x(container, LV_COORD_MAX, LV_ANIM_OFF);
+        const lv_font_t* font = lv_obj_get_style_text_font(input_label, LV_PART_MAIN);
+        lv_coord_t container_w = lv_obj_get_content_width(container);
+        if (container_w <= 0) container_w = 310;
+
+        std::string text_up_to_cursor = prompt_str + current_input.substr(0, cursor_pos);
+        lv_point_t cursor_size;
+        lv_txt_get_size(&cursor_size, text_up_to_cursor.c_str(), font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+
+        lv_point_t full_size;
+        lv_txt_get_size(&full_size, full_text.c_str(), font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+
+        if (full_size.x <= container_w) {
+            lv_obj_scroll_to_x(container, 0, LV_ANIM_OFF);
+        } else {
+            lv_coord_t cur_scroll = lv_obj_get_scroll_x(container);
+            lv_coord_t cursor_x = cursor_size.x;
+
+            if (cursor_x < cur_scroll + 20) {
+                lv_coord_t target_x = (cursor_x > 20) ? (cursor_x - 20) : 0;
+                lv_obj_scroll_to_x(container, target_x, LV_ANIM_OFF);
+            } else if (cursor_x > cur_scroll + container_w - 20) {
+                lv_coord_t target_x = cursor_x - container_w + 20;
+                lv_obj_scroll_to_x(container, target_x, LV_ANIM_OFF);
+            }
+        }
     }
     
     bsp_display_unlock();
@@ -3237,6 +3262,17 @@ static const char* get_emoji_representation(uint32_t cp)
     return "";
 }
 
+static int32_t get_line_content_start(const char* txt, size_t len, int32_t sol)
+{
+    if (!txt || sol < 0 || (size_t)sol >= len) return sol;
+    int32_t pos = sol;
+    // Skip any opening color tags: #RRGGBB 
+    while (pos + 7 < (int32_t)len && txt[pos] == '#' && txt[pos + 7] == ' ') {
+        pos += 8;
+    }
+    return pos;
+}
+
 static int32_t skip_color_tags_forward(const char* txt, size_t len, int32_t pos)
 {
     if (!txt || pos < 0 || pos >= (int32_t)len) return pos;
@@ -3249,6 +3285,36 @@ static int32_t skip_color_tags_forward(const char* txt, size_t len, int32_t pos)
             break;
         }
     }
+    return pos;
+}
+
+static int32_t skip_color_tags_backward(const char* txt, int32_t min_pos, int32_t pos)
+{
+    if (!txt || pos <= min_pos) return min_pos;
+    while (pos > min_pos) {
+        bool jumped = false;
+        // Check if pos is at or inside a color tag: #RRGGBB 
+        // A full tag is 8 bytes: # R R G G B B [space]
+        if (pos >= min_pos + 7 && txt[pos] == ' ' && txt[pos - 7] == '#') {
+            pos = pos - 7;
+            jumped = true;
+        }
+        for (int offset = 1; offset <= 6; offset++) {
+            if (pos >= min_pos + offset && txt[pos - offset] == '#' && 
+                pos + (7 - offset) < 4096 && txt[pos + (7 - offset)] == ' ') {
+                pos = pos - offset;
+                jumped = true;
+                break;
+            }
+        }
+        // Check escaped '##'
+        if (pos >= min_pos + 1 && txt[pos] == '#' && txt[pos - 1] == '#') {
+            pos = pos - 1;
+            jumped = true;
+        }
+        if (!jumped) break;
+    }
+    if (pos < min_pos) pos = min_pos;
     return pos;
 }
 
@@ -3558,7 +3624,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                         }
                         lv_textarea_set_cursor_pos(terminal_output, pos);
                     } else if (cmd == 'D') {
-                        // Non-destructive cursor left (clamped to start of current line, skipping color tags)
+                        // Non-destructive cursor left (clamped to start of line content, skipping color tags)
                         int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
                         const char* txt = lv_textarea_get_text(terminal_output);
                         size_t tlen = txt ? strlen(txt) : 0;
@@ -3573,24 +3639,18 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                                 }
                             }
                         }
+                        int32_t min_pos = get_line_content_start(txt, tlen, sol);
                         int count = 1;
                         if (!params.empty()) count = atoi(params.c_str());
                         if (count < 1) count = 1;
                         int32_t pos = cpos;
                         int moved = 0;
-                        while (pos > sol && moved < count) {
-                            if (pos >= 8 && txt[pos - 8] == '#' && txt[pos - 1] == ' ') {
-                                pos -= 8;
-                            } else if (pos >= 2 && txt[pos - 2] == '#' && txt[pos - 1] == '#') {
-                                pos -= 2;
-                                moved++;
-                            } else if (pos >= 1 && txt[pos - 1] == '#') {
-                                pos -= 1;
-                            } else {
-                                pos--;
-                                moved++;
-                            }
+                        while (pos > min_pos && moved < count) {
+                            pos--;
+                            pos = skip_color_tags_backward(txt, min_pos, pos);
+                            moved++;
                         }
+                        if (pos < min_pos) pos = min_pos;
                         lv_textarea_set_cursor_pos(terminal_output, pos);
                     } else if (cmd == 'G' || cmd == '`') {
                         // Cursor Horizontal Absolute (CHA / HPA, skipping color tags)
@@ -3773,6 +3833,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
             flush_batch();
             int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
             const char* txt = lv_textarea_get_text(terminal_output);
+            size_t tlen = txt ? strlen(txt) : 0;
             int32_t sol = 0;
             if (txt && cpos > 0) {
                 for (int32_t k = cpos - 1; k >= 0; k--) {
@@ -3782,30 +3843,30 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     }
                 }
             }
+            int32_t min_pos = get_line_content_start(txt, tlen, sol);
             if (i + 2 < len && data[i + 1] == ' ' && data[i + 2] == '\b') {
                 i += 2;
-                if (cpos > sol) {
-                    if (cpos >= 8 && txt[cpos - 8] == '#' && txt[cpos - 1] == ' ') {
+                if (cpos > min_pos) {
+                    if (cpos >= min_pos + 8 && txt[cpos - 8] == '#' && txt[cpos - 1] == ' ') {
                         for (int k = 0; k < 8; k++) lv_textarea_delete_char(terminal_output);
                     }
                     lv_textarea_delete_char(terminal_output);
                 }
             } else if (i + 3 < len && data[i + 1] == '\x1B' && data[i + 2] == '[' && data[i + 3] == 'K') {
                 i += 3;
-                if (cpos > sol) {
-                    if (cpos >= 8 && txt[cpos - 8] == '#' && txt[cpos - 1] == ' ') {
+                if (cpos > min_pos) {
+                    if (cpos >= min_pos + 8 && txt[cpos - 8] == '#' && txt[cpos - 1] == ' ') {
                         for (int k = 0; k < 8; k++) lv_textarea_delete_char(terminal_output);
                     }
                     lv_textarea_delete_char(terminal_output);
                 }
                 erase_to_end_of_line();
             } else {
-                // Non-destructive cursor left (clamped to start of line, skipping color tags)
-                if (cpos > sol) {
+                // Non-destructive cursor left (clamped to start of line content, skipping color tags)
+                if (cpos > min_pos) {
                     int32_t target = cpos - 1;
-                    if (target >= 8 && txt[target - 7] == '#' && txt[target] == ' ') {
-                        target -= 7;
-                    }
+                    target = skip_color_tags_backward(txt, min_pos, target);
+                    if (target < min_pos) target = min_pos;
                     lv_textarea_set_cursor_pos(terminal_output, target);
                 }
             }
@@ -3935,6 +3996,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
     if (!is_user_scrolled_back) {
         lv_obj_scroll_to_y(terminal_output, LV_COORD_MAX, LV_ANIM_OFF);
     }
+    lv_obj_scroll_to_x(terminal_output, 0, LV_ANIM_OFF);
 
     // Prune if buffer grows too large (> 12KB with color tags)
     const char* cur_txt = lv_textarea_get_text(terminal_output);
@@ -4339,6 +4401,7 @@ void SSHTerminal::scroll_up(int32_t pixels)
     
     // In LVGL: positive dy in lv_obj_scroll_by_bounded scrolls UP towards the top
     lv_obj_scroll_by_bounded(terminal_output, 0, pixels, LV_ANIM_OFF);
+    lv_obj_scroll_to_x(terminal_output, 0, LV_ANIM_OFF);
     update_scroll_indicator();
     
     bsp_display_unlock();
@@ -4351,6 +4414,7 @@ void SSHTerminal::scroll_down(int32_t pixels)
     
     // In LVGL: negative dy in lv_obj_scroll_by_bounded scrolls DOWN towards the bottom
     lv_obj_scroll_by_bounded(terminal_output, 0, -pixels, LV_ANIM_OFF);
+    lv_obj_scroll_to_x(terminal_output, 0, LV_ANIM_OFF);
     update_scroll_indicator();
     
     bsp_display_unlock();
@@ -4372,6 +4436,7 @@ void SSHTerminal::scroll_to_top()
     if (!bsp_display_lock(500)) return;
     
     lv_obj_scroll_to_y(terminal_output, 0, LV_ANIM_OFF);
+    lv_obj_scroll_to_x(terminal_output, 0, LV_ANIM_OFF);
     update_scroll_indicator();
     
     bsp_display_unlock();
@@ -4383,6 +4448,7 @@ void SSHTerminal::scroll_to_bottom()
     if (!bsp_display_lock(500)) return;
     
     lv_obj_scroll_to_y(terminal_output, LV_COORD_MAX, LV_ANIM_OFF);
+    lv_obj_scroll_to_x(terminal_output, 0, LV_ANIM_OFF);
     is_user_scrolled_back = false;
     update_scroll_indicator();
     
@@ -4428,13 +4494,9 @@ void SSHTerminal::handle_trackball_left()
 {
     if (ssh_connected && channel) {
         // Send ANSI cursor left to remote SSH shell
-        libssh2_channel_write(channel, "\033[D", 3);
+        ssh_write_all("\033[D", 3);
     } else {
-        if (history_index >= 0 || current_input.empty()) {
-            navigate_history(1);
-        } else {
-            move_cursor_left();
-        }
+        move_cursor_left();
     }
 }
 
@@ -4442,13 +4504,9 @@ void SSHTerminal::handle_trackball_right()
 {
     if (ssh_connected && channel) {
         // Send ANSI cursor right to remote SSH shell
-        libssh2_channel_write(channel, "\033[C", 3);
+        ssh_write_all("\033[C", 3);
     } else {
-        if (history_index >= 0) {
-            navigate_history(-1);
-        } else if (!current_input.empty()) {
-            move_cursor_right();
-        }
+        move_cursor_right();
     }
 }
 
