@@ -261,7 +261,7 @@ void keypad_task(void *param)
     C3Keyboard keyboard(i2c_handle);
     if (keyboard.init() != ESP_OK)
     {
-        ESP_LOGE("KEYPAD", "Failed to initialize keypad!");
+        ESP_LOGI("KEYPAD", "Keypad hardware not detected on I2C - exiting keypad task.");
         vTaskDelete(NULL);
         return;
     }

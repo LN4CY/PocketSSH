@@ -21,6 +21,17 @@ esp_err_t C3Keyboard::init()
         return ESP_FAIL;
     }
 
+    // Probe the I2C bus with a 50ms timeout to detect if the physical C3 keyboard coprocessor is present.
+    // In Wokwi simulation or environments without the physical keyboard hardware, probe fails gracefully
+    // so we avoid polling a non-existent device and flooding the console with I2C NACK errors.
+    esp_err_t probe_ret = i2c_master_probe(i2c_handle, I2C_KEYPAD_ADDR, 50);
+    if (probe_ret != ESP_OK)
+    {
+        ESP_LOGI(TAG, "Keypad coprocessor not detected at I2C address 0x%02X (%s) - running in Virtual/Serial mode",
+                 I2C_KEYPAD_ADDR, esp_err_to_name(probe_ret));
+        return probe_ret;
+    }
+
     // Configure the keypad device
     i2c_device_config_t dev_config = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7, // Address Length (7-bit)
@@ -58,7 +69,11 @@ uint32_t C3Keyboard::get_key()
 
     if (ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "Failed to read key from keypad: %s", esp_err_to_name(ret));
+        static int s_fail_count = 0;
+        if (s_fail_count < 3) {
+            ESP_LOGW(TAG, "Failed to read key from keypad: %s", esp_err_to_name(ret));
+            s_fail_count++;
+        }
         return 0;
     }
 
