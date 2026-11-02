@@ -7,7 +7,7 @@
       "type": "wokwi-ili9341",
       "id": "lcd",
       "top": -180,
-      "left": 20,
+      "left": 600,
       "rotate": 90,
       "attrs": {
         "flipVertical": "1"
@@ -35,35 +35,35 @@
       "type": "wokwi-pushbutton",
       "id": "tb_up",
       "top": 90,
-      "left": 150,
+      "left": 650,
       "attrs": { "color": "grey", "label": "▲ Up (Scroll)" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_left",
       "top": 140,
-      "left": 90,
+      "left": 600,
       "attrs": { "color": "grey", "label": "◀ Left" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_click",
       "top": 140,
-      "left": 150,
+      "left": 650,
       "attrs": { "color": "blue", "label": "● Trackball Click (Alt Mode)" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_right",
       "top": 140,
-      "left": 210,
+      "left": 710,
       "attrs": { "color": "grey", "label": "▶ Right" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_down",
       "top": 190,
-      "left": 150,
+      "left": 650,
       "attrs": { "color": "grey", "label": "▼ Down (Scroll)" }
     }
   ],
