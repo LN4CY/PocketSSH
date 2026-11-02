@@ -101,6 +101,7 @@ public:
     esp_err_t fetch_remote_key(const char* remote_path, const char* local_name = NULL);
     void start_fetch_remote_key(const char* remote_path, const char* local_name = NULL);
     void show_getkey_dialog();
+    void close_getkey_dialog();
     bool save_key_to_sd_and_nvs(const char* keyname, const char* key_data, size_t key_len);
     bool delete_key_from_sd_and_nvs(const char* keyname);
     void save_key_to_nvs(const char* keyname, const char* key_data);

@@ -1324,6 +1324,25 @@ void SSHTerminal::clear_terminal()
 
 void SSHTerminal::handle_key_input(char key, bool from_serial)
 {
+    // Dismiss Get Key modal on Esc / Ctrl+C, or submit on Enter
+    if (getkey_dialog) {
+        if (key == 27 || key == 3 || (uint8_t)key == 0x0C) {
+            close_getkey_dialog();
+            return;
+        }
+        if (key == '\r' || key == '\n') {
+            std::string path = "~/.ssh/id_pem";
+            if (getkey_path_ta && bsp_display_lock(500)) {
+                const char* t = lv_textarea_get_text(getkey_path_ta);
+                if (t && strlen(t) > 0) path = t;
+                bsp_display_unlock();
+            }
+            close_getkey_dialog();
+            start_fetch_remote_key(path.c_str(), NULL);
+            return;
+        }
+    }
+
     // Physical Keyboard Alt+C (T-Deck coprocessor sends 0x0C) or standard Ctrl+C (0x03)
     if ((uint8_t)key == 0x0C || (uint8_t)key == 0x03) {
         send_interrupt();
@@ -2871,12 +2890,13 @@ esp_err_t SSHTerminal::disconnect()
     ssh_rx_is_paused = false;
     if (getkey_dialog) {
         if (bsp_display_lock(500)) {
-            if (lv_obj_is_valid(getkey_dialog)) {
-                lv_obj_del(getkey_dialog);
-            }
+            lv_obj_delete_async(getkey_dialog);
             getkey_dialog = NULL;
             getkey_path_ta = NULL;
             bsp_display_unlock();
+        } else {
+            getkey_dialog = NULL;
+            getkey_path_ta = NULL;
         }
     }
     
@@ -4584,27 +4604,33 @@ void SSHTerminal::save_key_to_nvs(const char* keyname, const char* key_data)
         return;
     }
 
-    std::string list_str;
-    size_t list_len = 0;
-    if (nvs_get_str(nvs_handle, "__key_list__", NULL, &list_len) == ESP_OK && list_len > 0) {
-        std::vector<char> list_buf(list_len);
-        nvs_get_str(nvs_handle, "__key_list__", list_buf.data(), &list_len);
-        list_str = list_buf.data();
+    size_t key_len = strlen(key_data);
+    if (key_len < 4000) {
+        err = nvs_set_str(nvs_handle, clean_name.c_str(), key_data);
+    } else {
+        err = nvs_set_blob(nvs_handle, clean_name.c_str(), key_data, key_len);
     }
 
-    std::string key_entry = clean_name + ";";
-    if (list_str.find(key_entry) == std::string::npos) {
-        list_str += key_entry;
-        nvs_set_str(nvs_handle, "__key_list__", list_str.c_str());
-    }
+    if (err == ESP_OK) {
+        std::string list_str;
+        size_t list_len = 0;
+        if (nvs_get_str(nvs_handle, "__key_list__", NULL, &list_len) == ESP_OK && list_len > 0) {
+            std::vector<char> list_buf(list_len);
+            nvs_get_str(nvs_handle, "__key_list__", list_buf.data(), &list_len);
+            list_str = list_buf.data();
+        }
 
-    err = nvs_set_str(nvs_handle, clean_name.c_str(), key_data);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "nvs_set_str failed for key '%s': %s", clean_name.c_str(), esp_err_to_name(err));
+        std::string key_entry = clean_name + ";";
+        if (list_str.find(key_entry) == std::string::npos) {
+            list_str += key_entry;
+            nvs_set_str(nvs_handle, "__key_list__", list_str.c_str());
+        }
+        nvs_commit(nvs_handle);
+        ESP_LOGI(TAG, "Key '%s' saved to NVS", clean_name.c_str());
+    } else {
+        ESP_LOGW(TAG, "Failed to save key '%s' to NVS: %s", clean_name.c_str(), esp_err_to_name(err));
     }
-    nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
-    ESP_LOGI(TAG, "Key '%s' saved to NVS", clean_name.c_str());
 }
 
 void SSHTerminal::load_keys_from_nvs()
@@ -4633,7 +4659,12 @@ void SSHTerminal::load_keys_from_nvs()
                 std::vector<char> kdata_buf(kdata_len);
                 nvs_get_str(nvs_handle, kname.c_str(), kdata_buf.data(), &kdata_len);
                 load_key_from_memory(kname.c_str(), kdata_buf.data(), kdata_len);
-                ESP_LOGI(TAG, "Loaded key '%s' from NVS", kname.c_str());
+                ESP_LOGI(TAG, "Loaded key '%s' from NVS (str)", kname.c_str());
+            } else if (nvs_get_blob(nvs_handle, kname.c_str(), NULL, &kdata_len) == ESP_OK && kdata_len > 0) {
+                std::vector<char> kdata_buf(kdata_len);
+                nvs_get_blob(nvs_handle, kname.c_str(), kdata_buf.data(), &kdata_len);
+                load_key_from_memory(kname.c_str(), kdata_buf.data(), kdata_len);
+                ESP_LOGI(TAG, "Loaded key '%s' from NVS (blob)", kname.c_str());
             }
         }
         start = end + 1;
@@ -4837,7 +4868,22 @@ void SSHTerminal::start_fetch_remote_key(const char* remote_path, const char* lo
         params->local_name = local_name;
     }
 
-    xTaskCreate(fetch_key_task, "fetch_key", 8192, params, 5, NULL);
+    xTaskCreate(fetch_key_task, "fetch_key", 16384, params, 5, NULL);
+}
+
+void SSHTerminal::close_getkey_dialog()
+{
+    if (getkey_dialog) {
+        if (bsp_display_lock(500)) {
+            lv_obj_delete_async(getkey_dialog);
+            getkey_dialog = NULL;
+            getkey_path_ta = NULL;
+            bsp_display_unlock();
+        } else {
+            getkey_dialog = NULL;
+            getkey_path_ta = NULL;
+        }
+    }
 }
 
 void SSHTerminal::show_getkey_dialog()
@@ -4845,7 +4891,7 @@ void SSHTerminal::show_getkey_dialog()
     if (!terminal_screen) return;
     if (!bsp_display_lock(1000)) return;
 
-    if (getkey_dialog && lv_obj_is_valid(getkey_dialog)) {
+    if (getkey_dialog) {
         lv_obj_del(getkey_dialog);
         getkey_dialog = NULL;
         getkey_path_ta = NULL;
@@ -4869,7 +4915,7 @@ void SSHTerminal::show_getkey_dialog()
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 2);
 
     lv_obj_t* hint = lv_label_create(getkey_dialog);
-    lv_label_set_text(hint, "Select remote file to retrieve:");
+    lv_label_set_text(hint, "Select remote file (or press Enter):");
     lv_obj_set_style_text_color(hint, lv_color_hex(0x80D0FF), 0);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
     lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 4, 20);
@@ -4942,7 +4988,7 @@ void SSHTerminal::show_getkey_dialog()
             std::string path = lv_textarea_get_text(term->getkey_path_ta);
             if (path.empty()) path = "~/.ssh/id_pem";
             if (term->getkey_dialog) {
-                lv_obj_del(term->getkey_dialog);
+                lv_obj_delete_async(term->getkey_dialog);
                 term->getkey_dialog = NULL;
                 term->getkey_path_ta = NULL;
             }
@@ -4968,7 +5014,7 @@ void SSHTerminal::show_getkey_dialog()
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
         SSHTerminal* term = (SSHTerminal*)lv_event_get_user_data(e);
         if (term && term->getkey_dialog) {
-            lv_obj_del(term->getkey_dialog);
+            lv_obj_delete_async(term->getkey_dialog);
             term->getkey_dialog = NULL;
             term->getkey_path_ta = NULL;
         }
@@ -5006,9 +5052,12 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
 
     // Pause ssh_receive_task to give exclusive access to session
     ssh_rx_paused = true;
-    for (int w = 0; w < 50 && !ssh_rx_is_paused; w++) {
+    for (int w = 0; w < 100 && !ssh_rx_is_paused; w++) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+
+    // Acquire session mutex to guarantee exclusive libssh2 access across all tasks
+    if (ssh_mutex) xSemaphoreTakeRecursive(ssh_mutex, portMAX_DELAY);
 
     LIBSSH2_CHANNEL* exec_ch = NULL;
     int rc = 0;
@@ -5022,6 +5071,7 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
     }
 
     if (!exec_ch) {
+        if (ssh_mutex) xSemaphoreGiveRecursive(ssh_mutex);
         ssh_rx_paused = false;
         append_text("[Error: Failed to open exec channel for key retrieval]\n");
         return ESP_FAIL;
@@ -5034,14 +5084,29 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
         waitsocket(ssh_socket, session);
     }
 
+    auto cleanup_exec_ch = [this, &exec_ch]() {
+        if (!exec_ch) return;
+        int cr = 0;
+        while (libssh2_channel_close(exec_ch) == LIBSSH2_ERROR_EAGAIN && cr++ < 50) {
+            waitsocket(ssh_socket, session);
+        }
+        int fr = 0;
+        while (libssh2_channel_free(exec_ch) == LIBSSH2_ERROR_EAGAIN && fr++ < 50) {
+            waitsocket(ssh_socket, session);
+        }
+        exec_ch = NULL;
+    };
+
     if (rc != 0) {
+        cleanup_exec_ch();
+        if (ssh_mutex) xSemaphoreGiveRecursive(ssh_mutex);
         ssh_rx_paused = false;
         append_text("[Error: Failed to execute read command on remote server]\n");
-        libssh2_channel_free(exec_ch);
         return ESP_FAIL;
     }
 
     std::string key_content;
+    std::string err_content;
     char read_buf[512];
     ssize_t nread = 0;
     int read_eagain_retries = 0;
@@ -5058,25 +5123,40 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
             if (++read_eagain_retries > 50) break;
             waitsocket(ssh_socket, session);
         } else {
+            // Check for stderr output
+            ssize_t nerr = libssh2_channel_read_stderr(exec_ch, read_buf, sizeof(read_buf) - 1);
+            if (nerr > 0) {
+                read_buf[nerr] = '\0';
+                err_content.append(read_buf, nerr);
+            }
             break;
         }
     }
 
-    libssh2_channel_close(exec_ch);
-    libssh2_channel_free(exec_ch);
+    cleanup_exec_ch();
 
-    // Resume normal SSH receive task
+    // Release session mutex and resume normal SSH receive task
+    if (ssh_mutex) xSemaphoreGiveRecursive(ssh_mutex);
     ssh_rx_paused = false;
 
     if (key_content.empty() || key_content.find("-----BEGIN") == std::string::npos) {
-        char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg),
-            "\n[Error: Key '%s' not found or empty on server!]\n"
-            "[To create a PEM key on remote server, run:]\n"
-            "  ssh-keygen -t rsa -b 2048 -m PEM -f %s -N \"\"\n"
-            "  cat %s.pub >> ~/.ssh/authorized_keys\n\n",
-            remote_path, remote_path, remote_path);
-        append_text(err_msg);
+        if (!err_content.empty()) {
+            while (!err_content.empty() && (err_content.back() == '\r' || err_content.back() == '\n')) {
+                err_content.pop_back();
+            }
+            char err_msg[320];
+            snprintf(err_msg, sizeof(err_msg), "\n[Error from server: %s]\n", err_content.c_str());
+            append_text(err_msg);
+        } else {
+            char err_msg[256];
+            snprintf(err_msg, sizeof(err_msg),
+                "\n[Error: Key '%s' not found or empty on server!]\n"
+                "[To create a PEM key on remote server, run:]\n"
+                "  ssh-keygen -t rsa -b 2048 -m PEM -f %s -N \"\"\n"
+                "  cat %s.pub >> ~/.ssh/authorized_keys\n\n",
+                remote_path, remote_path, remote_path);
+            append_text(err_msg);
+        }
         return ESP_ERR_NOT_FOUND;
     }
 
