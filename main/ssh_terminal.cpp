@@ -1268,7 +1268,7 @@ void SSHTerminal::clear_terminal()
     }
 }
 
-void SSHTerminal::handle_key_input(char key)
+void SSHTerminal::handle_key_input(char key, bool from_serial)
 {
     // Physical Keyboard Alt+C (T-Deck coprocessor sends 0x0C) or standard Ctrl+C (0x03)
     if ((uint8_t)key == 0x0C || (uint8_t)key == 0x03) {
@@ -1276,147 +1276,151 @@ void SSHTerminal::handle_key_input(char key)
         return;
     }
 
-    // Physical Alt/Sym key codes from T-Deck keyboard coprocessor
-    if ((uint8_t)key == 0x80 || (uint8_t)key == 0x81 || (uint8_t)key == 0x82 || 
-        (uint8_t)key == 0x83 || (uint8_t)key == 0x84 || (uint8_t)key == 0x11 || 
-        (uint8_t)key == 0x12 || (uint8_t)key == 0x13 || (uint8_t)key == 0x14 ||
-        (uint8_t)key == 0xA4 || (uint8_t)key == 0xA5) {
-        toggle_alt_mode();
-        return;
-    }
-
-    // ========================================================
-    // ALT MODE ACTIVE KEY DISPATCH
-    // ========================================================
-    if (alt_mode) {
-        // Alt + Enter: Toggle between Local Shell Mode and Full Interactive SSH Mode
-        if (key == '\n' || key == '\r') {
-            set_alt_mode(false);
-            if (ssh_connected) {
-                toggle_local_shell_mode();
-            } else {
-                append_text("\n[Local Shell Active. Type 'help' for commands]\n> ");
-                scroll_to_bottom();
-            }
+    // Only process T-Deck physical keyboard modifier codes and symbol substitution
+    // when input originates from the physical keyboard, NEVER from a PC serial terminal!
+    if (!from_serial) {
+        // Physical Alt/Sym key codes from T-Deck keyboard coprocessor
+        if ((uint8_t)key == 0x80 || (uint8_t)key == 0x81 || (uint8_t)key == 0x82 || 
+            (uint8_t)key == 0x83 || (uint8_t)key == 0x84 || (uint8_t)key == 0x11 || 
+            (uint8_t)key == 0x12 || (uint8_t)key == 0x13 || (uint8_t)key == 0x14 ||
+            (uint8_t)key == 0xA4 || (uint8_t)key == 0xA5) {
+            toggle_alt_mode();
             return;
         }
 
-        // Backspace in Alt Mode
-        if (key == 8 || key == 127) {
-            if (ssh_connected && channel && !is_local_mode_during_ssh) {
-                if (!ssh_cmd_buffer.empty()) {
-                    ssh_cmd_buffer.pop_back();
-                    if (ssh_cmd_buffer.empty()) {
-                        ssh_at_line_start = true;
-                        set_activity_status("[ONLINE]", 0x50FF50);
-                    } else {
-                        std::string hud_text = "[" + ssh_cmd_buffer + "]";
-                        if (hud_text.length() > 10) hud_text = hud_text.substr(0, 9) + "]";
-                        set_activity_status(hud_text.c_str(), 0xFFFF50);
+        // ========================================================
+        // ALT MODE ACTIVE KEY DISPATCH
+        // ========================================================
+        if (alt_mode) {
+            // Alt + Enter: Toggle between Local Shell Mode and Full Interactive SSH Mode
+            if (key == '\n' || key == '\r') {
+                set_alt_mode(false);
+                if (ssh_connected) {
+                    toggle_local_shell_mode();
+                } else {
+                    append_text("\n[Local Shell Active. Type 'help' for commands]\n> ");
+                    scroll_to_bottom();
+                }
+                return;
+            }
+
+            // Backspace in Alt Mode
+            if (key == 8 || key == 127) {
+                if (ssh_connected && channel && !is_local_mode_during_ssh) {
+                    if (!ssh_cmd_buffer.empty()) {
+                        ssh_cmd_buffer.pop_back();
+                        if (ssh_cmd_buffer.empty()) {
+                            ssh_at_line_start = true;
+                            set_activity_status("[ONLINE]", 0x50FF50);
+                        } else {
+                            std::string hud_text = "[" + ssh_cmd_buffer + "]";
+                            if (hud_text.length() > 10) hud_text = hud_text.substr(0, 9) + "]";
+                            set_activity_status(hud_text.c_str(), 0xFFFF50);
+                        }
+                        return;
                     }
-                    return;
+                    ssh_write_all("\x7F", 1);
+                } else {
+                    if (cursor_pos > 0 && !current_input.empty()) {
+                        current_input.erase(cursor_pos - 1, 1);
+                        cursor_pos--;
+                        update_input_display();
+                    }
                 }
-                ssh_write_all("\x7F", 1);
-            } else {
-                if (cursor_pos > 0 && !current_input.empty()) {
-                    current_input.erase(cursor_pos - 1, 1);
-                    cursor_pos--;
-                    update_input_display();
+                return;
+            }
+
+            // Space -> Tab
+            if (key == ' ') {
+                if (ssh_connected && channel) {
+                    ssh_write_all("\t", 1);
+                } else {
+                    handle_tab_completion();
                 }
+                return;
             }
-            return;
-        }
 
-        // Space -> Tab
-        if (key == ' ') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\t", 1);
-            } else {
-                handle_tab_completion();
-            }
-            return;
-        }
+            // Missing Symbols
+            if (key == 't' || key == 'T') { send_char_or_insert('~'); return; }
+            if (key == 'p' || key == 'P') { send_char_or_insert('|'); return; }
+            if (key == 'b' || key == 'B') { send_char_or_insert('\\'); return; }
+            if (key == 'e' || key == 'E') { send_char_or_insert('='); return; }
+            if (key == 'u' || key == 'U') { send_char_or_insert('['); return; }
+            if (key == 'i' || key == 'I') { send_char_or_insert(']'); return; }
+            if (key == 'o' || key == 'O') { send_char_or_insert('{'); return; }
+            if (key == 'j' || key == 'J') { send_char_or_insert('}'); return; }
+            if (key == 'k' || key == 'K' || key == ',') { send_char_or_insert('<'); return; }
+            if (key == 'm' || key == 'M' || key == '.') { send_char_or_insert('>'); return; }
+            if (key == 'v' || key == 'V' || key == '5') { send_char_or_insert('%'); return; }
+            if (key == 'q' || key == 'Q') { send_char_or_insert('`'); return; }
+            if (key == 's' || key == 'S' || key == '4') { send_char_or_insert('$'); return; }
+            if (key == 'g' || key == 'G' || key == '6') { send_char_or_insert('^'); return; }
+            if (key == 'n' || key == 'N' || key == '7') { send_char_or_insert('&'); return; }
+            if (key == '0') { send_char_or_insert('0'); return; }
 
-        // Missing Symbols
-        if (key == 't' || key == 'T') { send_char_or_insert('~'); return; }
-        if (key == 'p' || key == 'P') { send_char_or_insert('|'); return; }
-        if (key == 'b' || key == 'B') { send_char_or_insert('\\'); return; }
-        if (key == 'e' || key == 'E') { send_char_or_insert('='); return; }
-        if (key == 'u' || key == 'U') { send_char_or_insert('['); return; }
-        if (key == 'i' || key == 'I') { send_char_or_insert(']'); return; }
-        if (key == 'o' || key == 'O') { send_char_or_insert('{'); return; }
-        if (key == 'j' || key == 'J') { send_char_or_insert('}'); return; }
-        if (key == 'k' || key == 'K' || key == ',') { send_char_or_insert('<'); return; }
-        if (key == 'm' || key == 'M' || key == '.') { send_char_or_insert('>'); return; }
-        if (key == 'v' || key == 'V' || key == '5') { send_char_or_insert('%'); return; }
-        if (key == 'q' || key == 'Q') { send_char_or_insert('`'); return; }
-        if (key == 's' || key == 'S' || key == '4') { send_char_or_insert('$'); return; }
-        if (key == 'g' || key == 'G' || key == '6') { send_char_or_insert('^'); return; }
-        if (key == 'n' || key == 'N' || key == '7') { send_char_or_insert('&'); return; }
-        if (key == '0') { send_char_or_insert('0'); return; }
-
-        // Control Keys (for SSH)
-        if (key == 'c' || key == 'C') { send_interrupt(); return; }
-        if (key == 'z' || key == 'Z') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\x1A", 1);
-                set_activity_status("[^Z SENT]", 0xFFFF50);
+            // Control Keys (for SSH)
+            if (key == 'c' || key == 'C') { send_interrupt(); return; }
+            if (key == 'z' || key == 'Z') {
+                if (ssh_connected && channel) {
+                    ssh_write_all("\x1A", 1);
+                    set_activity_status("[^Z SENT]", 0xFFFF50);
+                }
+                return;
             }
-            return;
-        }
-        if (key == 'l' || key == 'L') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\x0C", 1);
-            } else {
-                clear_terminal();
+            if (key == 'l' || key == 'L') {
+                if (ssh_connected && channel) {
+                    ssh_write_all("\x0C", 1);
+                } else {
+                    clear_terminal();
+                }
+                return;
             }
-            return;
-        }
-        if (key == 'a' || key == 'A') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\x01", 1);
+            if (key == 'a' || key == 'A') {
+                if (ssh_connected && channel) {
+                    ssh_write_all("\x01", 1);
+                }
+                return;
             }
-            return;
-        }
-        if (key == 'r' || key == 'R') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\x12", 1);
+            if (key == 'r' || key == 'R') {
+                if (ssh_connected && channel) {
+                    ssh_write_all("\x12", 1);
+                }
+                return;
             }
-            return;
-        }
-        if (key == 'x' || key == 'X') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\x18", 1);
+            if (key == 'x' || key == 'X') {
+                if (ssh_connected && channel) {
+                    ssh_write_all("\x18", 1);
+                }
+                return;
             }
-            return;
-        }
-        if (key == 'w' || key == 'W') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\x17", 1);
+            if (key == 'w' || key == 'W') {
+                if (ssh_connected && channel) {
+                    ssh_write_all("\x17", 1);
+                }
+                return;
             }
-            return;
-        }
-        if (key == 'f' || key == 'F') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\x06", 1);
+            if (key == 'f' || key == 'F') {
+                if (ssh_connected && channel) {
+                    ssh_write_all("\x06", 1);
+                }
+                return;
             }
-            return;
-        }
-        if (key == 'y' || key == 'Y') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\x19", 1);
+            if (key == 'y' || key == 'Y') {
+                if (ssh_connected && channel) {
+                    ssh_write_all("\x19", 1);
+                }
+                return;
             }
-            return;
-        }
-        if (key == 'h' || key == 'H') {
-            if (ssh_connected && channel) {
-                ssh_write_all("\x08", 1);
+            if (key == 'h' || key == 'H') {
+                if (ssh_connected && channel) {
+                    ssh_write_all("\x08", 1);
+                }
+                return;
             }
-            return;
-        }
-        if (key == 27) {
-            set_alt_mode(false);
-            return;
+            if (key == 27) {
+                set_alt_mode(false);
+                return;
+            }
         }
     }
 

@@ -41,7 +41,7 @@ public:
     
     void append_text(const char* text);
     void clear_terminal();
-    void handle_key_input(char key);
+    void handle_key_input(char key, bool from_serial = false);
     void handle_tab_completion();
     void set_ssh_ui_mode(bool ssh_active);
     void send_command(const char* cmd);

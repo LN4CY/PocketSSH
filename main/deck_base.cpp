@@ -366,32 +366,35 @@ void trackball_task(void *param)
             // Button just pressed - record start time
             press_start_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
         } else if (press && !last_press) {
-            // Button released - check duration
-            uint32_t press_duration = (xTaskGetTickCount() * portTICK_PERIOD_MS) - press_start_time;
-            
-            if (splash_screen) {
-                dismiss_splash_screen();
-            } else if (ssh_terminal) {
-                if (press_duration >= 400) {
-                    // Long press (>400ms):
-                    if (ssh_terminal->is_connected()) {
-                        ESP_LOGI("TRACKBALL", "Long press in SSH (%lu ms) - sending Ctrl+C", press_duration);
-                        ssh_terminal->send_interrupt();
+            if (press_start_time > 0) {
+                // Button released - check duration
+                uint32_t press_duration = (xTaskGetTickCount() * portTICK_PERIOD_MS) - press_start_time;
+                press_start_time = 0;
+                
+                if (splash_screen) {
+                    dismiss_splash_screen();
+                } else if (ssh_terminal) {
+                    if (press_duration >= 400) {
+                        // Long press (>400ms):
+                        if (ssh_terminal->is_connected()) {
+                            ESP_LOGI("TRACKBALL", "Long press in SSH (%lu ms) - sending Ctrl+C", press_duration);
+                            ssh_terminal->send_interrupt();
+                        } else {
+                            ESP_LOGI("TRACKBALL", "Long press detected (%lu ms) - deleting command", press_duration);
+                            ssh_terminal->delete_current_history_entry();
+                        }
                     } else {
-                        ESP_LOGI("TRACKBALL", "Long press detected (%lu ms) - deleting command", press_duration);
-                        ssh_terminal->delete_current_history_entry();
-                    }
-                } else {
-                    // Short press:
-                    if (ssh_terminal->is_alt_mode()) {
-                        ESP_LOGI("TRACKBALL", "Short press in Alt Mode: toggling Alt Mode OFF");
-                        ssh_terminal->set_alt_mode(false);
-                    } else if (ssh_terminal->is_scrolled_back()) {
-                        ESP_LOGI("TRACKBALL", "Short press: returning to bottom");
-                        ssh_terminal->scroll_to_bottom();
-                    } else {
-                        ESP_LOGI("TRACKBALL", "Short press: toggling Alt Mode ON");
-                        ssh_terminal->toggle_alt_mode();
+                        // Short press:
+                        if (ssh_terminal->is_alt_mode()) {
+                            ESP_LOGI("TRACKBALL", "Short press in Alt Mode: toggling Alt Mode OFF");
+                            ssh_terminal->set_alt_mode(false);
+                        } else if (ssh_terminal->is_scrolled_back()) {
+                            ESP_LOGI("TRACKBALL", "Short press: returning to bottom");
+                            ssh_terminal->scroll_to_bottom();
+                        } else {
+                            ESP_LOGI("TRACKBALL", "Short press: toggling Alt Mode ON");
+                            ssh_terminal->toggle_alt_mode();
+                        }
                     }
                 }
             }
@@ -424,12 +427,97 @@ void serial_terminal_task(void *param)
     setvbuf(stdout, NULL, _IONBF, 0);
 
     static bool last_was_cr = false;
+    static int telnet_state = 0;   // 0=normal, 1=got 0xFF, 2=subnegotiation, 3=3-byte cmd
+    static int ansi_state = 0;     // 0=normal, 1=got ESC, 2=got '[', 3=reading digits
+    static int ansi_num = 0;
+
     char ch = 0;
 
     while (1) {
         clearerr(stdin);
         
         while (read(fd, &ch, 1) > 0) {
+            uint8_t uch = (uint8_t)ch;
+
+            // 1. Telnet (RFC 854 / RFC 2217) Negotiation Filter
+            if (telnet_state == 0) {
+                if (uch == 0xFF) {
+                    telnet_state = 1;
+                    continue;
+                }
+            } else if (telnet_state == 1) {
+                if (uch == 0xFA) { // SB (Subnegotiation)
+                    telnet_state = 2;
+                } else if (uch >= 0xFB && uch <= 0xFE) { // WILL/WONT/DO/DONT (3 bytes)
+                    telnet_state = 3;
+                } else {
+                    telnet_state = 0;
+                }
+                continue;
+            } else if (telnet_state == 2) {
+                if (uch == 0xF0) { // SE (Subnegotiation End)
+                    telnet_state = 0;
+                }
+                continue;
+            } else if (telnet_state == 3) {
+                telnet_state = 0;
+                continue;
+            }
+
+            // 2. ANSI Escape Sequence State Machine (e.g. Arrow Keys from PC terminal)
+            if (ansi_state == 0) {
+                if (ch == '\033' || uch == 0x1B) {
+                    ansi_state = 1;
+                    continue;
+                }
+            } else if (ansi_state == 1) {
+                if (ch == '[' || ch == 'O') {
+                    ansi_state = 2;
+                    ansi_num = 0;
+                    continue;
+                } else {
+                    ansi_state = 0;
+                }
+            } else if (ansi_state == 2) {
+                if (ch >= '0' && ch <= '9') {
+                    ansi_num = (ch - '0');
+                    ansi_state = 3;
+                    continue;
+                } else {
+                    ansi_state = 0;
+                    if (splash_screen) dismiss_splash_screen();
+                    if (ssh_terminal) {
+                        if (ch == 'A') ssh_terminal->send_arrow_up();
+                        else if (ch == 'B') ssh_terminal->send_arrow_down();
+                        else if (ch == 'C') ssh_terminal->send_arrow_right();
+                        else if (ch == 'D') ssh_terminal->send_arrow_left();
+                        else if (ch == 'H') ssh_terminal->move_cursor_home();
+                        else if (ch == 'F') ssh_terminal->move_cursor_end();
+                    }
+                    continue;
+                }
+            } else if (ansi_state == 3) {
+                if (ch >= '0' && ch <= '9') {
+                    ansi_num = ansi_num * 10 + (ch - '0');
+                    continue;
+                } else if (ch == '~') {
+                    ansi_state = 0;
+                    if (splash_screen) dismiss_splash_screen();
+                    if (ssh_terminal) {
+                        if (ansi_num == 1) ssh_terminal->move_cursor_home();
+                        else if (ansi_num == 3) ssh_terminal->handle_key_input(127, true); // Delete
+                        else if (ansi_num == 4) ssh_terminal->move_cursor_end();
+                        else if (ansi_num == 5) ssh_terminal->scroll_page_up();
+                        else if (ansi_num == 6) ssh_terminal->scroll_page_down();
+                    }
+                    continue;
+                } else {
+                    ansi_state = 0;
+                    continue;
+                }
+            }
+
+            // 3. Normal Character Processing
             if (ch == '\n' && last_was_cr) {
                 last_was_cr = false;
                 continue;
@@ -445,7 +533,7 @@ void serial_terminal_task(void *param)
             }
 
             // Echo character for interactive serial shell
-            if ((unsigned char)ch >= 32 && (unsigned char)ch <= 126) {
+            if (uch >= 32 && uch <= 126) {
                 esp_rom_printf("%c", ch);
             } else if (ch == 8 || ch == 127) {
                 esp_rom_printf("\b \b");
@@ -454,7 +542,7 @@ void serial_terminal_task(void *param)
             }
 
             if (ssh_terminal) {
-                ssh_terminal->handle_key_input(ch);
+                ssh_terminal->handle_key_input(ch, true);
             }
         }
 
