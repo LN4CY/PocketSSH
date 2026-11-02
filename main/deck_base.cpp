@@ -63,6 +63,7 @@ static lv_obj_t *splash_screen = NULL;
 static lv_obj_t *splash_img = NULL;
 static lv_obj_t *splash_countdown_label = NULL;
 static lv_obj_t *splash_bar = NULL;
+static lv_obj_t *splash_wifi_label = NULL;
 static lv_timer_t *splash_timer = NULL;
 static int splash_frame = 0;
 static uint32_t splash_start_ms = 0;
@@ -71,10 +72,17 @@ static const lv_image_dsc_t* pepboy_frames[] = {
     &pepboy_4, &pepboy_5, &pepboy_6, &pepboy_7
 };
 
-// Dismiss splash screen (called by touch, keyboard, trackball, or 30s timeout)
-void dismiss_splash_screen()
+// Dismiss splash screen (called by touch, keyboard, trackball click, or 30s timeout)
+void dismiss_splash_screen(bool force = false)
 {
     if (!splash_screen) return;
+
+    if (!force) {
+        uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        if (now_ms - splash_start_ms < 2000) {
+            return; // Ignore inputs during the initial 2-second grace period
+        }
+    }
 
     bool locked = bsp_display_lock(500);
     if (locked) {
@@ -89,16 +97,30 @@ void dismiss_splash_screen()
             splash_img = NULL;
             splash_countdown_label = NULL;
             splash_bar = NULL;
+            splash_wifi_label = NULL;
         }
         bsp_display_unlock();
     }
 }
 
-// Touch event handler for splash screen - skip on touch after 1.5s grace period
+// Update Wi-Fi connection status text directly on the splash screen
+void deck_update_splash_wifi(const char* status_text, uint32_t color_hex)
+{
+    if (!splash_screen || !splash_wifi_label || !status_text) return;
+    if (bsp_display_lock(500)) {
+        if (splash_screen && splash_wifi_label) {
+            lv_label_set_text(splash_wifi_label, status_text);
+            lv_obj_set_style_text_color(splash_wifi_label, lv_color_hex(color_hex), 0);
+        }
+        bsp_display_unlock();
+    }
+}
+
+// Touch event handler for splash screen - skip on touch after 2s grace period
 void splash_touch_cb(lv_event_t * e)
 {
     uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-    if (now_ms - splash_start_ms >= 1500) {
+    if (now_ms - splash_start_ms >= 2000) {
         dismiss_splash_screen();
     }
 }
@@ -119,7 +141,7 @@ void splash_timer_cb(lv_timer_t * timer)
 
     // 30 seconds reached: automatically transition to main screen
     if (elapsed_ms >= 30000) {
-        dismiss_splash_screen();
+        dismiss_splash_screen(true); // force dismissal on countdown expiration
         return;
     }
 
@@ -238,7 +260,14 @@ void show_splash_screen()
     lv_obj_set_style_radius(splash_bar, 3, 0);
     lv_obj_align(splash_bar, LV_ALIGN_TOP_LEFT, 2, 150);
 
-    // 10. Skip Hint
+    // 10. WiFi Auto-Connect Status on Splash Screen
+    splash_wifi_label = lv_label_create(info_card);
+    lv_label_set_text(splash_wifi_label, "WiFi: Standby");
+    lv_obj_set_style_text_color(splash_wifi_label, lv_color_hex(0x60E060), 0);
+    lv_obj_set_style_text_font(splash_wifi_label, &lv_font_montserrat_10, 0);
+    lv_obj_align(splash_wifi_label, LV_ALIGN_TOP_LEFT, 2, 163);
+
+    // 11. Skip Hint
     lv_obj_t* skip_hint = lv_label_create(info_card);
     lv_label_set_text(skip_hint, "[ Tap / Key to Skip ]");
     lv_obj_set_style_text_color(skip_hint, lv_color_hex(0x408040), 0);
@@ -273,10 +302,10 @@ void keypad_task(void *param)
         {
             ESP_LOGI("KEYPAD", "Key Pressed: %c", (unsigned char)key);
 
-            // If splash screen is active, dismiss it on any key press after grace period (1.5s)
+            // If splash screen is active, dismiss it on any key press after grace period (2.0s)
             if (splash_screen) {
                 uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-                if (now_ms - splash_start_ms >= 1500) {
+                if (now_ms - splash_start_ms >= 2000) {
                     dismiss_splash_screen();
                     vTaskDelay(pdMS_TO_TICKS(50));
                     continue;  // Skip processing this key
@@ -294,12 +323,13 @@ void keypad_task(void *param)
 
 void trackball_task(void *param)
 {
-    static bool last_up = true;
-    static bool last_down = true;
-    static bool last_left = true;
-    static bool last_right = true;
-    static bool last_press = true;
-    static uint32_t press_start_time = 0;
+    // Read initial pin levels to avoid false edges on boot
+    bool last_up = gpio_get_level(BOARD_TBOX_G01);
+    bool last_down = gpio_get_level(BOARD_TBOX_G03);
+    bool last_left = gpio_get_level(BOARD_TBOX_G04);
+    bool last_right = gpio_get_level(BOARD_TBOX_G02);
+    bool last_press = gpio_get_level(BOARD_BOOT_PIN);
+    uint32_t press_start_time = 0;
     const uint32_t LONG_PRESS_MS = 1000; // 1 second for long press
     
     while (1) {
@@ -309,11 +339,9 @@ void trackball_task(void *param)
         bool right = gpio_get_level(BOARD_TBOX_G02);
         bool press = gpio_get_level(BOARD_BOOT_PIN);
         
-        // Detect falling edge on Up
+        // Detect falling edge on Up (roller movement does NOT dismiss splash screen)
         if (!up && last_up) {
-            if (splash_screen) {
-                dismiss_splash_screen();
-            } else if (ssh_terminal) {
+            if (!splash_screen && ssh_terminal) {
                 if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_up();
                 } else {
@@ -322,11 +350,9 @@ void trackball_task(void *param)
             }
         }
         
-        // Detect falling edge on Down
+        // Detect falling edge on Down (roller movement does NOT dismiss splash screen)
         if (!down && last_down) {
-            if (splash_screen) {
-                dismiss_splash_screen();
-            } else if (ssh_terminal) {
+            if (!splash_screen && ssh_terminal) {
                 if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_down();
                 } else {
@@ -335,11 +361,9 @@ void trackball_task(void *param)
             }
         }
 
-        // Detect falling edge on Left
+        // Detect falling edge on Left (roller movement does NOT dismiss splash screen)
         if (!left && last_left) {
-            if (splash_screen) {
-                dismiss_splash_screen();
-            } else if (ssh_terminal) {
+            if (!splash_screen && ssh_terminal) {
                 if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_left();
                 } else {
@@ -348,11 +372,9 @@ void trackball_task(void *param)
             }
         }
 
-        // Detect falling edge on Right
+        // Detect falling edge on Right (roller movement does NOT dismiss splash screen)
         if (!right && last_right) {
-            if (splash_screen) {
-                dismiss_splash_screen();
-            } else if (ssh_terminal) {
+            if (!splash_screen && ssh_terminal) {
                 if (ssh_terminal->is_alt_mode()) {
                     ssh_terminal->send_arrow_right();
                 } else {
@@ -372,7 +394,10 @@ void trackball_task(void *param)
                 press_start_time = 0;
                 
                 if (splash_screen) {
-                    dismiss_splash_screen();
+                    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                    if (now_ms - splash_start_ms >= 2000) {
+                        dismiss_splash_screen();
+                    }
                 } else if (ssh_terminal) {
                     if (press_duration >= 400) {
                         // Long press (>400ms):
@@ -485,7 +510,6 @@ void serial_terminal_task(void *param)
                     continue;
                 } else {
                     ansi_state = 0;
-                    if (splash_screen) dismiss_splash_screen();
                     if (ssh_terminal) {
                         if (ch == 'A') ssh_terminal->send_arrow_up();
                         else if (ch == 'B') ssh_terminal->send_arrow_down();
@@ -502,7 +526,6 @@ void serial_terminal_task(void *param)
                     continue;
                 } else if (ch == '~') {
                     ansi_state = 0;
-                    if (splash_screen) dismiss_splash_screen();
                     if (ssh_terminal) {
                         if (ansi_num == 1) ssh_terminal->move_cursor_home();
                         else if (ansi_num == 3) ssh_terminal->handle_key_input(127, true); // Delete
@@ -527,9 +550,12 @@ void serial_terminal_task(void *param)
                 ch = '\n';
             }
 
-            // If splash screen is active, dismiss it
-            if (splash_screen) {
-                dismiss_splash_screen();
+            // If splash screen is active, dismiss it on user keypress (printable or Enter) after grace period
+            if (splash_screen && ((uch >= 32 && uch <= 126) || ch == '\n')) {
+                uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                if (now_ms - splash_start_ms >= 2000) {
+                    dismiss_splash_screen();
+                }
             }
 
             // Echo character for interactive serial shell

@@ -36,8 +36,9 @@
 static const char *TAG = "SSH_TERMINAL";
 
 static EventGroupHandle_t s_wifi_event_group = NULL;
-#define WIFI_CONNECTED_BIT BIT0
-#define WIFI_FAIL_BIT BIT1
+#define WIFI_CONNECTED_BIT   BIT0
+#define WIFI_FAIL_BIT        BIT1
+#define WIFI_STA_STARTED_BIT BIT2
 
 static int s_retry_num = 0;
 #define WIFI_MAXIMUM_RETRY 5
@@ -186,6 +187,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         ESP_LOGI(TAG, "WiFi station started");
+        if (s_wifi_event_group) {
+            xEventGroupSetBits(s_wifi_event_group, WIFI_STA_STARTED_BIT);
+        }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t* dis = (wifi_event_sta_disconnected_t*) event_data;
         s_last_disconnect_reason = dis ? dis->reason : 0;
@@ -269,6 +273,7 @@ esp_err_t SSHTerminal::ensure_wifi_driver_started(SSHTerminal* terminal)
     }
     
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_start());
     
     // Set country to worldwide to enable channels 1-13
@@ -284,6 +289,11 @@ esp_err_t SSHTerminal::ensure_wifi_driver_started(SSHTerminal* terminal)
     // Disable modem power save to ensure low latency and prevent packet/connection loss
     esp_wifi_set_ps(WIFI_PS_NONE);
     
+    // Wait for WIFI_EVENT_STA_START to ensure the station is completely ready
+    if (s_wifi_event_group) {
+        xEventGroupWaitBits(s_wifi_event_group, WIFI_STA_STARTED_BIT, pdFALSE, pdTRUE, pdMS_TO_TICKS(3000));
+    }
+
     s_wifi_driver_started = true;
     ESP_LOGI(TAG, "WiFi driver started successfully");
     return ESP_OK;
@@ -310,13 +320,26 @@ esp_err_t SSHTerminal::init_wifi(const char* ssid, const char* password)
     
     ensure_wifi_driver_started(this);
     
+    // If already connected to this exact network, return immediately
+    if (wifi_connected && connected_ssid == ssid) {
+        ESP_LOGI(TAG, "Already connected to %s", ssid);
+        deck_update_splash_wifi("WiFi: Connected!", 0x00FF00);
+        return ESP_OK;
+    }
+
+    // If connected to a different network, disconnect cleanly without triggering reconnect retries
+    if (wifi_connected) {
+        s_retry_num = WIFI_MAXIMUM_RETRY; // Suppress auto-retry on intentional disconnect
+        esp_wifi_disconnect();
+        vTaskDelay(pdMS_TO_TICKS(150));
+        wifi_connected = false;
+        connected_ssid.clear();
+        update_status_bar();
+    }
+    
     s_retry_num = 0;
     s_last_disconnect_reason = 0;
     xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
-    
-    // Disconnect previous connection cleanly
-    esp_wifi_disconnect();
-    vTaskDelay(pdMS_TO_TICKS(100));
     
     wifi_config_t wifi_config = {};
     strncpy((char*)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid) - 1);
@@ -335,13 +358,21 @@ esp_err_t SSHTerminal::init_wifi(const char* ssid, const char* password)
     wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     wifi_config.sta.sae_h2e_identifier[0] = '\0';
     
-    // Scan all channels to pick strongest AP (vital for mesh & dual-band setups)
-    wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
-    wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    // Fast scan connects immediately upon detecting target AP
+    wifi_config.sta.scan_method = WIFI_FAST_SCAN;
     wifi_config.sta.threshold.rssi = -127;
     
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_connect());
+    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_set_config failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    
+    err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
+        return err;
+    }
     
     const int max_wait_ms = 15000;
     const int check_interval_ms = 500;
@@ -359,6 +390,8 @@ esp_err_t SSHTerminal::init_wifi(const char* ssid, const char* password)
             wifi_connected = true;
             connected_ssid = ssid;
 
+            deck_update_splash_wifi("WiFi: Connected!", 0x00FF00);
+
             esp_netif_ip_info_t ip_info;
             if (s_sta_netif && esp_netif_get_ip_info(s_sta_netif, &ip_info) == ESP_OK) {
                 char ip_str[64];
@@ -375,6 +408,7 @@ esp_err_t SSHTerminal::init_wifi(const char* ssid, const char* password)
             ESP_LOGI(TAG, "Failed to connect to SSID:%s", ssid);
             wifi_connected = false;
             update_status_bar();
+            deck_update_splash_wifi("WiFi: Connection Failed", 0xFF6060);
             return ESP_FAIL;
         }
         
@@ -386,6 +420,7 @@ esp_err_t SSHTerminal::init_wifi(const char* ssid, const char* password)
     wifi_connected = false;
     s_retry_num = 0;
     update_status_bar();
+    deck_update_splash_wifi("WiFi: Connection Timeout", 0xFF6060);
     return ESP_ERR_TIMEOUT;
 }
 
@@ -791,12 +826,16 @@ void SSHTerminal::try_autoconnect()
             char buf[128];
             snprintf(buf, sizeof(buf), "\nSaved WiFi: \"%s\" (Auto-connecting...)\n", saved_ssid.c_str());
             append_text(buf);
+            deck_update_splash_wifi("WiFi: Auto-connecting...", 0xFFFF50);
             xTaskCreate(autoconnect_task, "wifi_autoconn", 4096, this, 3, NULL);
         } else {
             char buf[128];
             snprintf(buf, sizeof(buf), "\nSaved WiFi: \"%s\" (Auto-connect OFF, type 'connect' to use)\n", saved_ssid.c_str());
             append_text(buf);
+            deck_update_splash_wifi("WiFi: Auto-connect OFF", 0x888888);
         }
+    } else {
+        deck_update_splash_wifi("WiFi: Not Configured", 0x888888);
     }
 }
 
@@ -808,19 +847,25 @@ void SSHTerminal::autoconnect_task(void* param)
         return;
     }
     
-    // Allow UI and splash screen to settle
-    vTaskDelay(pdMS_TO_TICKS(1500));
+    // Give Wi-Fi driver and system brief moment to stabilize
+    vTaskDelay(pdMS_TO_TICKS(1000));
     
     std::string saved_ssid, saved_pass;
-    if (terminal->load_wifi_from_nvs(saved_ssid, saved_pass)) {
+    if (terminal->load_wifi_config(saved_ssid, saved_pass)) {
+        char splash_buf[64];
+        snprintf(splash_buf, sizeof(splash_buf), "WiFi: Connecting to '%s'...", saved_ssid.c_str());
+        deck_update_splash_wifi(splash_buf, 0xFFFF50);
+
         esp_err_t ret = terminal->init_wifi(saved_ssid.c_str(), saved_pass.c_str());
         if (ret == ESP_OK) {
             terminal->append_text("Auto-connect WiFi successful!\n");
+            deck_update_splash_wifi("WiFi: Connected!", 0x00FF00);
         } else {
             char err_buf[128];
             snprintf(err_buf, sizeof(err_buf), "\nAuto-connect failed [%d]: %s\nType 'scan' or 'connect' to retry.\n\n",
                      s_last_disconnect_reason, SSHTerminal::wifi_reason_to_string(s_last_disconnect_reason));
             terminal->append_text(err_buf);
+            deck_update_splash_wifi("WiFi: Connection Failed", 0xFF6060);
         }
     }
     
@@ -1621,13 +1666,16 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
 
                 if (args.empty()) {
                     if (wifi_connected && !connected_ssid.empty()) {
-                        save_wifi_to_nvs(connected_ssid.c_str(), "");
+                        std::string saved_ssid, saved_pass;
+                        load_wifi_config(saved_ssid, saved_pass);
+                        std::string pass_to_save = (saved_ssid == connected_ssid) ? saved_pass : "";
+                        save_wifi_config(connected_ssid.c_str(), pass_to_save.c_str());
                         char buf[128];
                         snprintf(buf, sizeof(buf), "Saved active network: \"%s\" (Auto-connect: %s)\n",
                                  connected_ssid.c_str(), get_wifi_autoconnect_enabled() ? "ON" : "OFF");
                         append_text(buf);
                     } else {
-                        append_text("Usage:\n  save <SSID|#> [PASSWORD]   - Save network to NVS\n  save \"My WiFi\" password     - Supports quotes for spaces\n  save (saves currently connected WiFi)\n");
+                        append_text("Usage:\n  save <SSID|#> [PASSWORD]   - Save network to NVS & SD\n  save \"My WiFi\" password     - Supports quotes for spaces\n  save (saves currently connected WiFi)\n");
                     }
                 } else {
                     bool is_num = !args[0].empty() && std::all_of(args[0].begin(), args[0].end(), ::isdigit);
@@ -1648,9 +1696,15 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                     }
 
                     if (!target_ssid.empty()) {
-                        save_wifi_to_nvs(target_ssid.c_str(), target_pass.c_str());
+                        if (target_pass.empty()) {
+                            std::string saved_ssid, saved_pass;
+                            if (load_wifi_config(saved_ssid, saved_pass) && saved_ssid == target_ssid) {
+                                target_pass = saved_pass;
+                            }
+                        }
+                        save_wifi_config(target_ssid.c_str(), target_pass.c_str());
                         char buf[160];
-                        snprintf(buf, sizeof(buf), "WiFi network saved to NVS:\n  SSID: \"%s\"\n  Auto-connect: %s\nType 'connect' to connect to it.\n",
+                        snprintf(buf, sizeof(buf), "WiFi network saved to NVS & SD:\n  SSID: \"%s\"\n  Auto-connect: %s\nType 'connect' to connect to it.\n",
                                  target_ssid.c_str(), get_wifi_autoconnect_enabled() ? "ON" : "OFF");
                         append_text(buf);
                     }

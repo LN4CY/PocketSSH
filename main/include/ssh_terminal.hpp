@@ -26,6 +26,9 @@
 // External check for SD card status from deck_base
 bool is_sd_card_mounted();
 
+// Splash screen WiFi status update function in deck_base
+void deck_update_splash_wifi(const char* status_text, uint32_t color_hex);
+
 class SSHTerminal
 {
 public:
@@ -88,6 +91,7 @@ public:
     
     lv_obj_t* get_screen() { return terminal_screen; }
     
+    // Status bar & splash integration
     void update_status_bar();
     
     // SSH key management
