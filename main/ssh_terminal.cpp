@@ -453,9 +453,10 @@ esp_err_t SSHTerminal::scan_wifi()
     }
     cached_scan_results = unique_aps;
     
+    std::string scan_result;
     char header[96];
     snprintf(header, sizeof(header), "Found %d networks:\n #  SSID                 RSSI   CH  AUTH\n", (int)unique_aps.size());
-    append_text(header);
+    scan_result += header;
     
     for (size_t i = 0; i < unique_aps.size() && i < 15; i++) {
         const auto& ap = unique_aps[i];
@@ -481,10 +482,11 @@ esp_err_t SSHTerminal::scan_wifi()
         }
         snprintf(line, sizeof(line), "[%2d] %-18s %3ddBm %2d  %-9s\n",
                  (int)(i + 1), ssid_disp.c_str(), (int)ap.rssi, (int)ap.primary, auth_str);
-        append_text(line);
+        scan_result += line;
     }
     
-    append_text("\nConnect: connect <#> [password]\n\n");
+    scan_result += "\nConnect: connect <#> [password]\n\n";
+    append_text(scan_result.c_str());
     return ESP_OK;
 }
 
@@ -1220,12 +1222,12 @@ void SSHTerminal::append_text(const char* text)
     size_t current_len = current_text ? strlen(current_text) : 0;
     size_t new_len = strlen(text);
     
-    // Scrollback capacity: 16 KB (hundreds of lines of terminal backlog)
-    const size_t MAX_BUFFER_SIZE = 16384;
+    // Scrollback capacity: 4 KB (hundreds of lines of terminal backlog)
+    const size_t MAX_BUFFER_SIZE = 4096;
     
     if (current_len + new_len >= MAX_BUFFER_SIZE) {
-        // Trim oldest ~4KB from the top, retaining recent lines
-        size_t trim_target = (current_len > 4096) ? 4096 : (current_len / 2);
+        // Trim oldest ~2KB from the top, retaining recent lines
+        size_t trim_target = (current_len > 2048) ? 2048 : (current_len / 2);
         const char* cut = strchr(current_text + trim_target, '\n');
         if (cut && *(cut + 1) != '\0') {
             lv_textarea_set_text(terminal_output, cut + 1);
@@ -1254,6 +1256,7 @@ void SSHTerminal::append_text(const char* text)
     }
     
     bsp_display_unlock();
+    vTaskDelay(pdMS_TO_TICKS(1));
 }
 
 void SSHTerminal::clear_terminal()
@@ -1927,41 +1930,41 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                 append_text("=====================================\n\n");
             }
             else if (current_input == "version" || current_input == "ver" || current_input == "-v" || current_input == "--version") {
-                append_text("\n=== PocketSSH Version ===\n");
+                append_text("\n=== PocketSSH Version ===\n"
 #ifdef POCKETSSH_VERSION
-                append_text(" Version:  v" POCKETSSH_VERSION "\n");
+                            " Version:  v" POCKETSSH_VERSION "\n"
 #else
-                append_text(" Version:  v1.3.0\n");
+                            " Version:  v1.3.0\n"
 #endif
-                append_text(" Target:   ESP32-S3 LilyGO T-Deck / T-Deck Plus\n");
-                append_text(" Build:    " __DATE__ " " __TIME__ "\n");
-                append_text(" Features: WPA3-SAE, WiFi Scanner, NVS Auto-connect,\n");
-                append_text("           VT100 SSH2 Terminal, SD Key Management\n");
-                append_text("=========================\n\n");
+                            " Target:   ESP32-S3 LilyGO T-Deck / T-Deck Plus\n"
+                            " Build:    " __DATE__ " " __TIME__ "\n"
+                            " Features: WPA3-SAE, WiFi Scanner, NVS Auto-connect,\n"
+                            "           VT100 SSH2 Terminal, SD Key Management\n"
+                            "=========================\n\n");
             }
             else if (current_input == "help") {
-                append_text("Available commands:\n");
-                append_text("  scan                       - Scan 2.4GHz WiFi networks\n");
-                append_text("  connect [SSID|#] [PASS]    - Connect WiFi (or saved if empty)\n");
-                append_text("  save <SSID|#> [PASS]       - Save WiFi network to NVS\n");
-                append_text("  saved                      - Show saved WiFi network\n");
-                append_text("  forget                     - Forget saved WiFi credentials\n");
-                append_text("  autoconnect <on|off>       - Toggle auto-connect on boot\n");
-                append_text("  status                     - Show WiFi info & IP\n");
-                append_text("  disconnect                 - Disconnect WiFi\n");
-                append_text("  ssh <HOST> <PORT> <U> <P>  - Connect via SSH (password)\n");
-                append_text("  sshkey <H> <P> <U> <KEY>   - Connect via SSH (private key)\n");
-                append_text("  keys                       - List all loaded SSH keys\n");
-                append_text("    Note: Place .pem keys in /sdcard/ssh_keys/ before use\n");
-                append_text("  exit                       - Disconnect SSH session\n");
-                append_text("  clear                      - Clear terminal\n");
-                append_text("  pgup / pgdn / top / bottom - Scroll terminal output\n");
-                append_text("  scroll                     - Show scrollback controls\n");
-                append_text("  Tab / Alt+Space            - Auto-complete command, SSID or keys\n");
-                append_text("  version                    - Show version & build info\n");
-                append_text("  invert                     - Toggle LCD color inversion\n");
-                append_text("  resume / fg                - Resume active SSH session (or Alt+Enter)\n");
-                append_text("  help                       - Show this help\n");
+                append_text("Available commands:\n"
+                            "  scan                       - Scan 2.4GHz WiFi networks\n"
+                            "  connect [SSID|#] [PASS]    - Connect WiFi (or saved if empty)\n"
+                            "  save <SSID|#> [PASS]       - Save WiFi network to NVS\n"
+                            "  saved                      - Show saved WiFi network\n"
+                            "  forget                     - Forget saved WiFi credentials\n"
+                            "  autoconnect <on|off>       - Toggle auto-connect on boot\n"
+                            "  status                     - Show WiFi info & IP\n"
+                            "  disconnect                 - Disconnect WiFi\n"
+                            "  ssh <HOST> <PORT> <U> <P>  - Connect via SSH (password)\n"
+                            "  sshkey <H> <P> <U> <KEY>   - Connect via SSH (private key)\n"
+                            "  keys                       - List all loaded SSH keys\n"
+                            "    Note: Place .pem keys in /sdcard/ssh_keys/ before use\n"
+                            "  exit                       - Disconnect SSH session\n"
+                            "  clear                      - Clear terminal\n"
+                            "  pgup / pgdn / top / bottom - Scroll terminal output\n"
+                            "  scroll                     - Show scrollback controls\n"
+                            "  Tab / Alt+Space            - Auto-complete command, SSID or keys\n"
+                            "  version                    - Show version & build info\n"
+                            "  invert                     - Toggle LCD color inversion\n"
+                            "  resume / fg                - Resume active SSH session (or Alt+Enter)\n"
+                            "  help                       - Show this help\n");
             }
             else if (current_input == "invert" || current_input == "lcd invert" || current_input == "color invert") {
                 static bool s_inverted = false;
@@ -4547,18 +4550,19 @@ void SSHTerminal::send_char_or_insert(char c)
 
 void SSHTerminal::show_loaded_keys()
 {
-    append_text("\n=== Loaded SSH Keys ===\n");
+    std::string keys_text = "\n=== Loaded SSH Keys ===\n";
     if (loaded_keys.empty()) {
-        append_text("  No SSH keys currently loaded.\n");
-        append_text("  Place .pem in /sdcard/ssh_keys/ or use ':getkey <path>'\n");
+        keys_text += "  No SSH keys currently loaded.\n";
+        keys_text += "  Place .pem in /sdcard/ssh_keys/ or use ':getkey <path>'\n";
     } else {
         for (const auto& pair : loaded_keys) {
             char buf[128];
             snprintf(buf, sizeof(buf), "  * %s (%zu bytes)\n", pair.first.c_str(), pair.second.size());
-            append_text(buf);
+            keys_text += buf;
         }
     }
-    append_text("=======================\n\n");
+    keys_text += "=======================\n\n";
+    append_text(keys_text.c_str());
 }
 
 struct FetchKeyParams {

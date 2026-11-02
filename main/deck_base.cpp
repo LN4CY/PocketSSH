@@ -543,6 +543,7 @@ void serial_terminal_task(void *param)
 
             if (ssh_terminal) {
                 ssh_terminal->handle_key_input(ch, true);
+                vTaskDelay(pdMS_TO_TICKS(1));
             }
         }
 
@@ -780,47 +781,49 @@ extern "C" void app_main(void)
     }
     
     // Display version and initial instructions
+    std::string boot_text;
 #ifdef POCKETSSH_VERSION
-    ssh_terminal->append_text("PocketSSH v" POCKETSSH_VERSION "\n");
+    boot_text += "PocketSSH v" POCKETSSH_VERSION "\n";
 #else
-    ssh_terminal->append_text("PocketSSH Terminal Ready\n");
+    boot_text += "PocketSSH Terminal Ready\n";
 #endif
 
     if (!virtual_target) {
         // Display storage status
         if (sd_status == ESP_OK) {
-            ssh_terminal->append_text("Storage: MicroSD mounted (/sdcard)\n");
+            boot_text += "Storage: MicroSD mounted (/sdcard)\n";
         } else {
-            ssh_terminal->append_text("Storage: MicroSD not mounted (NVS fallback)\n");
+            boot_text += "Storage: MicroSD not mounted (NVS fallback)\n";
         }
 
         // Display touch controller status
         if (touch_status == ESP_OK && touch_handle != NULL) {
             char touch_info[64];
             snprintf(touch_info, sizeof(touch_info), "Touch: GT911 active (0x%02X)\n", s_detected_touch_addr);
-            ssh_terminal->append_text(touch_info);
+            boot_text += touch_info;
         } else {
-            ssh_terminal->append_text("Touch: Hardware not detected (Trackball navigation mode)\n");
+            boot_text += "Touch: Hardware not detected (Trackball navigation mode)\n";
         }
     } else {
-        ssh_terminal->append_text("Environment: Virtual ESP32-S3 Target (Headless Serial Terminal)\n");
-        ssh_terminal->append_text("Storage: NVS Flash\n");
+        boot_text += "Environment: Virtual ESP32-S3 Target (Headless Serial Terminal)\n";
+        boot_text += "Storage: NVS Flash\n";
     }
 
     // Display loaded SSH keys
     auto loaded_keys = ssh_terminal->get_loaded_key_names();
     if (!loaded_keys.empty()) {
-        ssh_terminal->append_text("\nLoaded SSH keys:\n");
+        boot_text += "\nLoaded SSH keys:\n";
         for (const auto& keyname : loaded_keys) {
-            ssh_terminal->append_text("  - ");
-            ssh_terminal->append_text(keyname.c_str());
-            ssh_terminal->append_text("\n");
+            boot_text += "  - ";
+            boot_text += keyname;
+            boot_text += "\n";
         }
-        ssh_terminal->append_text("\n");
+        boot_text += "\n";
     } else {
-        ssh_terminal->append_text("\nNo SSH keys found in /sdcard/ssh_keys/ or NVS.\n");
-        ssh_terminal->append_text("Use 'getkey <path>' or copy .pem files to /sdcard/ssh_keys/\n\n");
+        boot_text += "\nNo SSH keys found in /sdcard/ssh_keys/ or NVS.\n";
+        boot_text += "Use 'getkey <path>' or copy .pem files to /sdcard/ssh_keys/\n\n";
     }
+    ssh_terminal->append_text(boot_text.c_str());
     
     // Update status bar to show initial battery voltage
     ssh_terminal->update_status_bar();
@@ -833,11 +836,11 @@ extern "C" void app_main(void)
         // Check for saved WiFi network and auto-connect
         ssh_terminal->try_autoconnect();
 
-        xTaskCreate(keypad_task, "keypad_task", 4096, NULL, 5, NULL);
-        xTaskCreate(trackball_task, "trackball_task", 4096, NULL, 5, NULL);
+        xTaskCreatePinnedToCore(keypad_task, "keypad_task", 4096, NULL, 3, NULL, 0);
+        xTaskCreatePinnedToCore(trackball_task, "trackball_task", 4096, NULL, 3, NULL, 0);
     }
 
-    xTaskCreate(serial_terminal_task, "serial_terminal_task", 4096, NULL, 5, NULL);
+    xTaskCreatePinnedToCore(serial_terminal_task, "serial_terminal_task", 4096, NULL, 3, NULL, 0);
 }
 
 static sdmmc_card_t* s_sdcard = nullptr;
