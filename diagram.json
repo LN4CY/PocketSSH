@@ -7,7 +7,7 @@
       "type": "wokwi-ili9341",
       "id": "lcd",
       "top": -180,
-      "left": 600,
+      "left": 300,
       "rotate": 90,
       "attrs": {
         "flipVertical": "1"
@@ -17,7 +17,7 @@
       "type": "board-esp32-s3-devkitc-1",
       "id": "esp",
       "top": -160,
-      "left": 380,
+      "left": 80,
       "attrs": {
         "flashSize": "16",
         "psramSize": "8",
@@ -28,42 +28,42 @@
       "type": "wokwi-microsd-card",
       "id": "sdcard",
       "top": 120,
-      "left": 380,
+      "left": 80,
       "attrs": {}
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_up",
       "top": 90,
-      "left": 650,
+      "left": 350,
       "attrs": { "color": "grey", "label": "▲ Up (Scroll)" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_left",
       "top": 140,
-      "left": 600,
+      "left": 300,
       "attrs": { "color": "grey", "label": "◀ Left" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_click",
       "top": 140,
-      "left": 650,
+      "left": 350,
       "attrs": { "color": "blue", "label": "● Trackball Click (Alt Mode)" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_right",
       "top": 140,
-      "left": 710,
+      "left": 410,
       "attrs": { "color": "grey", "label": "▶ Right" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_down",
       "top": 190,
-      "left": 650,
+      "left": 350,
       "attrs": { "color": "grey", "label": "▼ Down (Scroll)" }
     }
   ],

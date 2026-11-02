@@ -208,12 +208,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         if (s_wifi_event_group) {
             xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         }
-        
-        if (terminal) {
-            char ip_str[64];
-            snprintf(ip_str, sizeof(ip_str), "\nWiFi Connected! IP: " IPSTR "\n", IP2STR(&event->ip_info.ip));
-            terminal->append_text(ip_str);
-        }
     }
 }
 
@@ -362,6 +356,16 @@ esp_err_t SSHTerminal::init_wifi(const char* ssid, const char* password)
             ESP_LOGI(TAG, "Connected to AP SSID:%s", ssid);
             wifi_connected = true;
             connected_ssid = ssid;
+
+            esp_netif_ip_info_t ip_info;
+            if (s_sta_netif && esp_netif_get_ip_info(s_sta_netif, &ip_info) == ESP_OK) {
+                char ip_str[64];
+                snprintf(ip_str, sizeof(ip_str), "\nWiFi Connected! IP: " IPSTR "\n", IP2STR(&ip_info.ip));
+                append_text(ip_str);
+            } else {
+                append_text("\nWiFi Connected!\n");
+            }
+
             update_status_bar();
             save_wifi_config(ssid, password ? password : "");
             return ESP_OK;
