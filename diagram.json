@@ -4,10 +4,20 @@
   "editor": "wokwi",
   "parts": [
     {
+      "type": "wokwi-ili9341",
+      "id": "lcd",
+      "top": -180,
+      "left": 20,
+      "rotate": 90,
+      "attrs": {
+        "flipVertical": "1"
+      }
+    },
+    {
       "type": "board-esp32-s3-devkitc-1",
       "id": "esp",
-      "top": -80,
-      "left": -60,
+      "top": -160,
+      "left": 380,
       "attrs": {
         "flashSize": "16",
         "psramSize": "8",
@@ -15,72 +25,64 @@
       }
     },
     {
-      "type": "wokwi-ili9341",
-      "id": "lcd",
-      "top": -220,
-      "left": 160,
-      "rotate": 90,
-      "attrs": {
-        "flipVertical": "1"
-      }
-    },
-    {
       "type": "wokwi-microsd-card",
       "id": "sdcard",
-      "top": 160,
-      "left": -60,
+      "top": 120,
+      "left": 380,
       "attrs": {}
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_up",
-      "top": 120,
-      "left": 250,
+      "top": 90,
+      "left": 150,
       "attrs": { "color": "grey", "label": "▲ Up (Scroll)" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_left",
-      "top": 170,
-      "left": 190,
+      "top": 140,
+      "left": 90,
       "attrs": { "color": "grey", "label": "◀ Left" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_click",
-      "top": 170,
-      "left": 250,
+      "top": 140,
+      "left": 150,
       "attrs": { "color": "blue", "label": "● Trackball Click (Alt Mode)" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_right",
-      "top": 170,
-      "left": 310,
+      "top": 140,
+      "left": 210,
       "attrs": { "color": "grey", "label": "▶ Right" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "tb_down",
-      "top": 220,
-      "left": 250,
+      "top": 190,
+      "left": 150,
       "attrs": { "color": "grey", "label": "▼ Down (Scroll)" }
     }
   ],
   "connections": [
-    [ "esp:3V3", "lcd:VCC", "red", [ "v0" ] ],
+    [ "esp:3V3.1", "lcd:VCC", "red", [ "v0" ] ],
     [ "esp:GND.1", "lcd:GND", "black", [ "v0" ] ],
     [ "esp:12", "lcd:CS", "yellow", [ "v0" ] ],
     [ "esp:11", "lcd:D/C", "orange", [ "v0" ] ],
     [ "esp:41", "lcd:MOSI", "green", [ "v0" ] ],
     [ "esp:40", "lcd:SCK", "blue", [ "v0" ] ],
     [ "esp:42", "lcd:LED", "white", [ "v0" ] ],
-    [ "esp:3V3", "sdcard:VCC", "red", [ "v0" ] ],
+    [ "esp:3V3.2", "sdcard:VCC", "red", [ "v0" ] ],
     [ "esp:GND.1", "sdcard:GND", "black", [ "v0" ] ],
     [ "esp:39", "sdcard:CS", "yellow", [ "v0" ] ],
     [ "esp:41", "sdcard:DI", "green", [ "v0" ] ],
     [ "esp:38", "sdcard:DO", "purple", [ "v0" ] ],
     [ "esp:40", "sdcard:SCK", "blue", [ "v0" ] ],
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
     [ "esp:3", "tb_up:1.l", "green", [ "v0" ] ],
     [ "esp:GND.1", "tb_up:2.l", "black", [ "v0" ] ],
     [ "esp:1", "tb_left:1.l", "green", [ "v0" ] ],

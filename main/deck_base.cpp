@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <dirent.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -411,14 +413,23 @@ void serial_terminal_task(void *param)
     uart_vfs_dev_port_set_tx_line_endings(0, ESP_LINE_ENDINGS_CRLF);
     uart_vfs_dev_use_nonblocking(0);
 
+    // Ensure non-blocking mode on standard input file descriptor
+    int fd = fileno(stdin);
+    int flags = fcntl(fd, F_GETFL);
+    if (flags >= 0) {
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+
     setvbuf(stdin, NULL, _IONBF, 0);
     setvbuf(stdout, NULL, _IONBF, 0);
 
     static bool last_was_cr = false;
+    char ch = 0;
+
     while (1) {
-        int c = fgetc(stdin);
-        if (c != EOF && c >= 0) {
-            char ch = (char)c;
+        clearerr(stdin);
+        
+        while (read(fd, &ch, 1) > 0) {
             if (ch == '\n' && last_was_cr) {
                 last_was_cr = false;
                 continue;
@@ -434,7 +445,7 @@ void serial_terminal_task(void *param)
             }
 
             // Echo character for interactive serial shell
-            if (ch >= 32 && ch <= 126) {
+            if ((unsigned char)ch >= 32 && (unsigned char)ch <= 126) {
                 esp_rom_printf("%c", ch);
             } else if (ch == 8 || ch == 127) {
                 esp_rom_printf("\b \b");
@@ -445,9 +456,9 @@ void serial_terminal_task(void *param)
             if (ssh_terminal) {
                 ssh_terminal->handle_key_input(ch);
             }
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(15));
         }
+
+        vTaskDelay(pdMS_TO_TICKS(15));
     }
 }
 
