@@ -2811,7 +2811,6 @@ esp_err_t SSHTerminal::connect_with_key(const char* host, int port, const char* 
     append_text("SSH handshake successful\n");
 
     if (ssh_authenticate_pubkey(username, privkey_data, privkey_len) != ESP_OK) {
-        append_text("ERROR: Public key authentication failed\n");
         disconnect();
         return ESP_FAIL;
     }
@@ -2865,14 +2864,22 @@ esp_err_t SSHTerminal::ssh_authenticate_pubkey(const char* username, const char*
     while ((rc = libssh2_userauth_publickey_frommemory(session, username, strlen(username),
                                                          NULL, 0,  // public key (optional)
                                                          privkey_data, privkey_len,
-                                                         NULL)) == LIBSSH2_ERROR_EAGAIN);  // no passphrase
+                                                         NULL)) == LIBSSH2_ERROR_EAGAIN) {
+        waitsocket(ssh_socket, session);
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
     
     if (rc) {
         char *err_msg;
         int err_len;
         libssh2_session_last_error(session, &err_msg, &err_len, 0);
         ESP_LOGE(TAG, "Public key authentication failed: %s (error code: %d)", err_msg, rc);
-        append_text("ERROR: Public key authentication failed\n");
+        char diag[256];
+        snprintf(diag, sizeof(diag),
+            "ERROR: Key rejected by server (%s, code %d)\n"
+            "[Tip: Ensure public key is in ~/.ssh/authorized_keys on server]\n",
+            err_msg ? err_msg : "auth failed", rc);
+        append_text(diag);
         return ESP_FAIL;
     }
 
