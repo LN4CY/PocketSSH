@@ -4694,7 +4694,9 @@ bool SSHTerminal::save_key_to_sd_and_nvs(const char* keyname, const char* key_da
 {
     if (!keyname || !key_data || key_len == 0) return false;
 
-    // 1. Save to SD card if mounted (protect shared SPI2 bus with display lock)
+    bool saved_on_sd = false;
+
+    // 1. Save to SD card if mounted (primary key store)
     if (is_sd_card_mounted()) {
         bool lock_acquired = bsp_display_lock(2000);
         mkdir("/sdcard/ssh_keys", 0755);
@@ -4708,9 +4710,12 @@ bool SSHTerminal::save_key_to_sd_and_nvs(const char* keyname, const char* key_da
 
         FILE* f = fopen(filepath, "wb");
         if (f) {
-            fwrite(key_data, 1, key_len, f);
+            size_t written = fwrite(key_data, 1, key_len, f);
             fclose(f);
-            ESP_LOGI(TAG, "Key saved to SD card: %s", filepath);
+            if (written == key_len) {
+                saved_on_sd = true;
+                ESP_LOGI(TAG, "Key saved to SD card: %s", filepath);
+            }
         } else {
             ESP_LOGE(TAG, "Failed to write key to SD card: %s", filepath);
         }
@@ -4719,8 +4724,13 @@ bool SSHTerminal::save_key_to_sd_and_nvs(const char* keyname, const char* key_da
         }
     }
 
-    // 2. Save to NVS
-    save_key_to_nvs(keyname, key_data);
+    // 2. Only save to NVS if no SD card is mounted (fallback for devices without SD card)
+    if (!saved_on_sd) {
+        ESP_LOGI(TAG, "No SD card available; saving key '%s' to NVS fallback", keyname);
+        save_key_to_nvs(keyname, key_data);
+    } else {
+        ESP_LOGI(TAG, "Key '%s' safely persisted to SD card - skipping NVS storage", keyname);
+    }
 
     // 3. Load into memory
     load_key_from_memory(keyname, key_data, key_len);
@@ -5568,7 +5578,11 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
     save_key_to_sd_and_nvs(key_alias.c_str(), key_content.c_str(), key_content.size());
 
     char ok_msg[160];
-    snprintf(ok_msg, sizeof(ok_msg), "[Key '%s' saved to /sdcard/ssh_keys/ & NVS! Ready to use]\n", key_alias.c_str());
+    if (is_sd_card_mounted()) {
+        snprintf(ok_msg, sizeof(ok_msg), "[Key '%s' saved to /sdcard/ssh_keys/! Ready to use]\n", key_alias.c_str());
+    } else {
+        snprintf(ok_msg, sizeof(ok_msg), "[Key '%s' saved to NVS! Ready to use]\n", key_alias.c_str());
+    }
     append_text(ok_msg);
     return ESP_OK;
 }

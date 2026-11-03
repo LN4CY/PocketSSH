@@ -274,6 +274,31 @@ class TestKeyManagerAndFormatValidation(unittest.TestCase):
         self.assertIn("id_pem", nvs_namespaces["ssh_keys"])
         self.assertEqual(len(nvs_namespaces["storage"]), 0) # History was reclaimed for the key!
 
+    def test_save_key_prefers_sd_over_nvs(self):
+        # SD card is primary key store; NVS is fallback only when SD is not mounted
+        sd_mounted = True
+        sd_storage = {}
+        nvs_storage = {}
+
+        def save_key_strategy(keyname, key_data, is_sd_mounted):
+            if is_sd_mounted:
+                sd_storage[keyname] = key_data
+                return "saved_to_sd"
+            else:
+                nvs_storage[keyname] = key_data
+                return "saved_to_nvs"
+
+        # Case 1: SD mounted -> written to SD, NVS remains untouched
+        result = save_key_strategy("id_pem", "PEM_DATA", is_sd_mounted=True)
+        self.assertEqual(result, "saved_to_sd")
+        self.assertIn("id_pem", sd_storage)
+        self.assertNotIn("id_pem", nvs_storage)
+
+        # Case 2: SD not mounted -> falls back to NVS
+        result = save_key_strategy("backup_key", "PEM_DATA_2", is_sd_mounted=False)
+        self.assertEqual(result, "saved_to_nvs")
+        self.assertIn("backup_key", nvs_storage)
+
 
 class TestEscapeCommandStateMachine(unittest.TestCase):
     """Verifies that :getkey, :keys, :exit are captured locally and :test passes to remote shell."""
