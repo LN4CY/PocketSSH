@@ -742,7 +742,8 @@ extern "C" void app_main(void)
     printf("\n====================================\n[PocketSSH] Starting on ESP32-S3...\n====================================\n");
     fflush(stdout);
     esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND || ret == ESP_ERR_NVS_NOT_ENOUGH_SPACE) {
+        ESP_LOGW(TAG, "NVS flash full or corrupted (0x%x) - erasing and re-initializing", ret);
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
     }

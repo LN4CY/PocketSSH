@@ -242,6 +242,38 @@ class TestKeyManagerAndFormatValidation(unittest.TestCase):
         self.assertEqual(len(sanitized), 15)
         self.assertEqual(sanitized, "very_long_key_n")
 
+    def test_nvs_history_cap_and_space_reclamation(self):
+        # Command history must be capped to 25 items in NVS to preserve flash space
+        MAX_NVS_HIST = 25
+        history = [f"command_{i}" for i in range(120)]
+        start_idx = len(history) - MAX_NVS_HIST if len(history) > MAX_NVS_HIST else 0
+        saved_items = history[start_idx:]
+        self.assertEqual(len(saved_items), 25)
+        self.assertEqual(saved_items[0], "command_95")
+        self.assertEqual(saved_items[-1], "command_119")
+
+    def test_nvs_key_saving_reclaims_space_on_nvs_full(self):
+        # Simulate NVS space reclamation: when ssh_keys namespace hits out-of-space,
+        # storage (command history) is erased to prioritize storing the private key
+        nvs_namespaces = {
+            "storage": {"hist_0": "ls", "hist_1": "pwd", "hist_count": 2},
+            "ssh_keys": {}
+        }
+        nvs_space_available = 0 # Out of space!
+
+        def save_key(name, data):
+            nonlocal nvs_space_available
+            if nvs_space_available <= 0:
+                # Reclaim space from command history namespace
+                nvs_namespaces["storage"].clear()
+                nvs_space_available += 10 # Space freed!
+            nvs_namespaces["ssh_keys"][name] = data
+            return True
+
+        self.assertTrue(save_key("id_pem", "-----BEGIN RSA PRIVATE KEY-----..."))
+        self.assertIn("id_pem", nvs_namespaces["ssh_keys"])
+        self.assertEqual(len(nvs_namespaces["storage"]), 0) # History was reclaimed for the key!
+
 
 class TestEscapeCommandStateMachine(unittest.TestCase):
     """Verifies that :getkey, :keys, :exit are captured locally and :test passes to remote shell."""

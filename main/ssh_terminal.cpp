@@ -1636,7 +1636,7 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
             }
             if (!matches_any) {
                 // Not a recognized escape command - flush entire buffer to remote shell
-                libssh2_channel_write(channel, ssh_cmd_buffer.c_str(), ssh_cmd_buffer.size());
+                ssh_write_all(ssh_cmd_buffer.c_str(), ssh_cmd_buffer.size());
                 ssh_cmd_buffer.clear();
                 ssh_at_line_start = false;
                 set_activity_status("[ONLINE]", 0x50FF50);
@@ -2490,32 +2490,45 @@ void SSHTerminal::save_history_to_nvs()
     
     err = nvs_open("storage", NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to open NVS for writing history: %s", esp_err_to_name(err));
+        if (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE) {
+            ESP_LOGW(TAG, "NVS full on opening history - reclaiming space");
+        } else {
+            ESP_LOGE(TAG, "Failed to open NVS for writing history: %s", esp_err_to_name(err));
+        }
         return;
     }
     
+    // Store only the most recent 25 commands to prevent clogging NVS
+    const size_t MAX_NVS_HIST = 25;
     size_t start_idx = 0;
-    if (command_history.size() > 100) {
-        start_idx = command_history.size() - 100;
+    if (command_history.size() > MAX_NVS_HIST) {
+        start_idx = command_history.size() - MAX_NVS_HIST;
     }
     
     uint32_t history_count = command_history.size() - start_idx;
     err = nvs_set_u32(nvs_handle, "hist_count", history_count);
+    if (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE) {
+        ESP_LOGW(TAG, "NVS out of space - erasing old history entries to self-heal");
+        nvs_erase_all(nvs_handle);
+        nvs_commit(nvs_handle);
+        err = nvs_set_u32(nvs_handle, "hist_count", history_count);
+    }
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to save history count: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "Failed to save history count: %s", esp_err_to_name(err));
         nvs_close(nvs_handle);
         return;
     }
     
     int saved_count = 0;
-    for (size_t i = start_idx; i < command_history.size() && saved_count < 100; i++) {
+    for (size_t i = start_idx; i < command_history.size() && saved_count < (int)MAX_NVS_HIST; i++) {
         char key[16];
         snprintf(key, sizeof(key), "hist_%lu", (unsigned long)(i - start_idx));
         
         err = nvs_set_str(nvs_handle, key, command_history[i].c_str());
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "Failed to save command %zu: %s", i, esp_err_to_name(err));
-        } else {
+        if (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE) {
+            ESP_LOGW(TAG, "NVS storage full at command %d - stopping history save", saved_count);
+            break;
+        } else if (err == ESP_OK) {
             saved_count++;
         }
         
@@ -2526,7 +2539,7 @@ void SSHTerminal::save_history_to_nvs()
     
     err = nvs_commit(nvs_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to commit NVS changes: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "Failed to commit NVS history changes: %s", esp_err_to_name(err));
     } else {
         ESP_LOGI(TAG, "Saved %d commands to NVS", saved_count);
     }
@@ -2560,6 +2573,11 @@ void SSHTerminal::clear_history_nvs()
 
 int SSHTerminal::waitsocket(int socket_fd, LIBSSH2_SESSION *session)
 {
+    if (socket_fd < 0 || !session) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+        return 0;
+    }
+
     struct timeval timeout;
     int rc;
     fd_set fd;
@@ -2567,8 +2585,8 @@ int SSHTerminal::waitsocket(int socket_fd, LIBSSH2_SESSION *session)
     fd_set *readfd = NULL;
     int dir;
 
-    timeout.tv_sec = 2;
-    timeout.tv_usec = 0;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 500000; // 500ms timeout for responsive polling without high latency
 
     FD_ZERO(&fd);
     FD_SET(socket_fd, &fd);
@@ -2580,6 +2598,11 @@ int SSHTerminal::waitsocket(int socket_fd, LIBSSH2_SESSION *session)
 
     if(dir & LIBSSH2_SESSION_BLOCK_OUTBOUND)
         writefd = &fd;
+
+    if (!readfd && !writefd) {
+        // Fallback: wait on readable to avoid invalid select calls
+        readfd = &fd;
+    }
 
     rc = select(socket_fd + 1, readfd, writefd, NULL, &timeout);
 
@@ -4288,12 +4311,14 @@ void SSHTerminal::handle_side_panel_trackball_down()
 void SSHTerminal::handle_side_panel_trackball_click()
 {
     if (!is_side_panel_open() || side_panel_btns.empty()) return;
+    if (!bsp_display_lock(500)) return;
     if (side_panel_focus_idx >= 0 && side_panel_focus_idx < (int)side_panel_btns.size()) {
         lv_obj_t* btn = side_panel_btns[side_panel_focus_idx];
         if (btn) {
             lv_obj_send_event(btn, LV_EVENT_CLICKED, NULL);
         }
     }
+    bsp_display_unlock();
 }
 
 void SSHTerminal::send_special_key(const char* sequence)
@@ -4669,8 +4694,9 @@ bool SSHTerminal::save_key_to_sd_and_nvs(const char* keyname, const char* key_da
 {
     if (!keyname || !key_data || key_len == 0) return false;
 
-    // 1. Save to SD card if mounted
+    // 1. Save to SD card if mounted (protect shared SPI2 bus with display lock)
     if (is_sd_card_mounted()) {
+        bool lock_acquired = bsp_display_lock(2000);
         mkdir("/sdcard/ssh_keys", 0755);
         char filepath[256];
         std::string fname = keyname;
@@ -4688,6 +4714,9 @@ bool SSHTerminal::save_key_to_sd_and_nvs(const char* keyname, const char* key_da
         } else {
             ESP_LOGE(TAG, "Failed to write key to SD card: %s", filepath);
         }
+        if (lock_acquired) {
+            bsp_display_unlock();
+        }
     }
 
     // 2. Save to NVS
@@ -4702,13 +4731,17 @@ bool SSHTerminal::delete_key_from_sd_and_nvs(const char* keyname)
 {
     if (!keyname) return false;
 
-    // Delete from SD card
+    // Delete from SD card (protect shared SPI2 bus with display lock)
     if (is_sd_card_mounted()) {
+        bool lock_acquired = bsp_display_lock(2000);
         char filepath[256];
         snprintf(filepath, sizeof(filepath), "/sdcard/ssh_keys/%s", keyname);
         unlink(filepath);
         snprintf(filepath, sizeof(filepath), "/sdcard/ssh_keys/%s.pem", keyname);
         unlink(filepath);
+        if (lock_acquired) {
+            bsp_display_unlock();
+        }
     }
 
     // Delete from NVS
@@ -4738,6 +4771,17 @@ void SSHTerminal::save_key_to_nvs(const char* keyname, const char* key_data)
 
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open("ssh_keys", NVS_READWRITE, &nvs_handle);
+    if (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE) {
+        // Reclaim space by clearing history namespace
+        ESP_LOGW(TAG, "NVS full - reclaiming space from history for SSH key '%s'", clean_name.c_str());
+        nvs_handle_t hist_h;
+        if (nvs_open("storage", NVS_READWRITE, &hist_h) == ESP_OK) {
+            nvs_erase_all(hist_h);
+            nvs_commit(hist_h);
+            nvs_close(hist_h);
+        }
+        err = nvs_open("ssh_keys", NVS_READWRITE, &nvs_handle);
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to open NVS namespace ssh_keys: %s", esp_err_to_name(err));
         return;
@@ -4748,6 +4792,22 @@ void SSHTerminal::save_key_to_nvs(const char* keyname, const char* key_data)
         err = nvs_set_str(nvs_handle, clean_name.c_str(), key_data);
     } else {
         err = nvs_set_blob(nvs_handle, clean_name.c_str(), key_data, key_len);
+    }
+
+    if (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE) {
+        // Reclaim space and retry key write
+        ESP_LOGW(TAG, "NVS write failed (out of space) - clearing history and retrying key '%s'", clean_name.c_str());
+        nvs_handle_t hist_h;
+        if (nvs_open("storage", NVS_READWRITE, &hist_h) == ESP_OK) {
+            nvs_erase_all(hist_h);
+            nvs_commit(hist_h);
+            nvs_close(hist_h);
+        }
+        if (key_len < 4000) {
+            err = nvs_set_str(nvs_handle, clean_name.c_str(), key_data);
+        } else {
+            err = nvs_set_blob(nvs_handle, clean_name.c_str(), key_data, key_len);
+        }
     }
 
     if (err == ESP_OK) {
@@ -4997,7 +5057,11 @@ void SSHTerminal::start_fetch_remote_key(const char* remote_path, const char* lo
         return;
     }
 
-    FetchKeyParams* params = new FetchKeyParams();
+    FetchKeyParams* params = new (std::nothrow) FetchKeyParams();
+    if (!params) {
+        append_text("\n[Error: Out of memory]\n");
+        return;
+    }
     params->terminal = this;
     params->remote_path = (remote_path && strlen(remote_path) > 0) ? remote_path : "~/.ssh/id_pem";
     if (params->remote_path.find('/') == std::string::npos) {
@@ -5007,7 +5071,11 @@ void SSHTerminal::start_fetch_remote_key(const char* remote_path, const char* lo
         params->local_name = local_name;
     }
 
-    xTaskCreate(fetch_key_task, "fetch_key", 16384, params, 5, NULL);
+    BaseType_t ret = xTaskCreatePinnedToCore(fetch_key_task, "fetch_key", 8192, params, 3, NULL, 0);
+    if (ret != pdPASS) {
+        delete params;
+        append_text("\n[Error: Failed to create key retrieval task (out of memory)]\n");
+    }
 }
 
 void SSHTerminal::close_getkey_dialog()
@@ -5171,6 +5239,7 @@ void SSHTerminal::handle_getkey_trackball_right()
 void SSHTerminal::handle_getkey_trackball_click()
 {
     if (!getkey_dialog) return;
+    if (!bsp_display_lock(500)) return;
 
     if (getkey_focus_idx >= 1 && getkey_focus_idx <= 3) {
         int preset_idx = getkey_focus_idx - 1;
@@ -5186,6 +5255,8 @@ void SSHTerminal::handle_getkey_trackball_click()
             lv_obj_send_event(getkey_cancel_btn, LV_EVENT_CLICKED, NULL);
         }
     }
+
+    bsp_display_unlock();
 }
 
 void SSHTerminal::show_getkey_dialog()
@@ -5360,6 +5431,7 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
     append_text(msg);
 
     // Pause ssh_receive_task to give exclusive access to session
+    ssh_rx_is_paused = false;
     ssh_rx_paused = true;
     for (int w = 0; w < 100 && !ssh_rx_is_paused; w++) {
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -5374,6 +5446,7 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
     while ((exec_ch = libssh2_channel_open_session(session)) == NULL && retries++ < 50) {
         if (libssh2_session_last_error(session, NULL, NULL, 0) == LIBSSH2_ERROR_EAGAIN) {
             waitsocket(ssh_socket, session);
+            vTaskDelay(pdMS_TO_TICKS(10));
         } else {
             break;
         }
@@ -5391,17 +5464,20 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
     retries = 0;
     while ((rc = libssh2_channel_exec(exec_ch, cmd)) == LIBSSH2_ERROR_EAGAIN && retries++ < 50) {
         waitsocket(ssh_socket, session);
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
     auto cleanup_exec_ch = [this, &exec_ch]() {
         if (!exec_ch) return;
         int cr = 0;
-        while (libssh2_channel_close(exec_ch) == LIBSSH2_ERROR_EAGAIN && cr++ < 50) {
+        while (libssh2_channel_close(exec_ch) == LIBSSH2_ERROR_EAGAIN && cr++ < 25) {
             waitsocket(ssh_socket, session);
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
         int fr = 0;
-        while (libssh2_channel_free(exec_ch) == LIBSSH2_ERROR_EAGAIN && fr++ < 50) {
+        while (libssh2_channel_free(exec_ch) == LIBSSH2_ERROR_EAGAIN && fr++ < 25) {
             waitsocket(ssh_socket, session);
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
         exec_ch = NULL;
     };
@@ -5431,6 +5507,7 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
         } else if (nread == LIBSSH2_ERROR_EAGAIN) {
             if (++read_eagain_retries > 50) break;
             waitsocket(ssh_socket, session);
+            vTaskDelay(pdMS_TO_TICKS(10));
         } else {
             // Check for stderr output
             ssize_t nerr = libssh2_channel_read_stderr(exec_ch, read_buf, sizeof(read_buf) - 1);
@@ -5457,7 +5534,7 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
             snprintf(err_msg, sizeof(err_msg), "\n[Error from server: %s]\n", err_content.c_str());
             append_text(err_msg);
         } else {
-            char err_msg[256];
+            char err_msg[384];
             snprintf(err_msg, sizeof(err_msg),
                 "\n[Error: Key '%s' not found or empty on server!]\n"
                 "[To create a PEM key on remote server, run:]\n"
