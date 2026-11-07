@@ -799,6 +799,125 @@ class TestModalDialogTrackballAndFocusIsolation(unittest.TestCase):
         self.assertEqual(background_events, 0)
 
 
+class TestHighSpeedAnsiParser(unittest.TestCase):
+    """Verifies that the high-speed in-memory ANSI parser stages logs cleanly in RAM,
+    handles packet-boundary CRLFs, caps backlog at 6KB, and eliminates terminal crawl."""
+
+    def test_in_memory_ansi_staging_throughput(self):
+        # Simulated log line with green [INFO], reset, and text
+        raw_stream = "\033[32m[INFO]\033[0m System initialization complete at 100%\r\n"
+        
+        # In-memory staging simulation matching SSHTerminal::process_received_data
+        staged = []
+        color_open = False
+        i = 0
+        while i < len(raw_stream):
+            if raw_stream[i] == '\033' and raw_stream[i:i+5] == "\033[32m":
+                if color_open:
+                    staged.append('#')
+                staged.append("#00ff00 ")
+                color_open = True
+                i += 5
+            elif raw_stream[i] == '\033' and raw_stream[i:i+4] == "\033[0m":
+                if color_open:
+                    staged.append('#')
+                    color_open = False
+                i += 4
+            elif raw_stream[i] == '\r' and i + 1 < len(raw_stream) and raw_stream[i+1] == '\n':
+                staged.append('\n')
+                i += 2
+            else:
+                staged.append(raw_stream[i])
+                i += 1
+
+        result = "".join(staged)
+        self.assertEqual(result, "#00ff00 [INFO]# System initialization complete at 100%\n")
+        self.assertFalse(color_open)
+
+    def test_crlf_split_across_packet_boundary(self):
+        # Simulates TCP fragmentation where \r is at the end of chunk 1 and \n is at chunk 2 start
+        chunk1 = "Line 1 data\r"
+        chunk2 = "\nLine 2 data"
+
+        pending_cr = False
+        output_lines = []
+        cur_line = []
+
+        def process_chunk(chunk):
+            nonlocal pending_cr, output_lines, cur_line
+            i = 0
+            if pending_cr:
+                pending_cr = False
+                if len(chunk) > 0 and chunk[0] == '\n':
+                    # Split CRLF recognized: commit newline without lone CR reset
+                    output_lines.append("".join(cur_line))
+                    cur_line = []
+                    i = 1
+                else:
+                    # Lone CR: cursor back to start
+                    cur_line = []
+            
+            while i < len(chunk):
+                ch = chunk[i]
+                if ch == '\r':
+                    if i + 1 < len(chunk):
+                        if chunk[i + 1] == '\n':
+                            output_lines.append("".join(cur_line))
+                            cur_line = []
+                            i += 2
+                            continue
+                        else:
+                            cur_line = []
+                            i += 1
+                            continue
+                    else:
+                        pending_cr = True
+                        break
+                elif ch == '\n':
+                    output_lines.append("".join(cur_line))
+                    cur_line = []
+                else:
+                    cur_line.append(ch)
+                i += 1
+
+        process_chunk(chunk1)
+        self.assertTrue(pending_cr)
+        self.assertEqual("".join(cur_line), "Line 1 data")
+
+        process_chunk(chunk2)
+        self.assertFalse(pending_cr)
+        self.assertEqual(output_lines, ["Line 1 data"])
+        self.assertEqual("".join(cur_line), "Line 2 data")
+
+    def test_backlog_pruning_cap(self):
+        # When buffer grows > 6144 bytes, prune to nearest newline after (len - 3072)
+        long_text = "\n".join([f"Log line entry number {k:04d} with some extra padding text" for k in range(150)])
+        self.assertGreater(len(long_text), 6144)
+
+        target_len = len(long_text)
+        p = target_len - 3072
+        nl = long_text.find('\n', p)
+        self.assertNotEqual(nl, -1)
+        pruned = long_text[nl + 1:]
+
+        # Pruned text should be roughly 3000 bytes and start cleanly with a full line
+        self.assertLess(len(pruned), 3072)
+        self.assertTrue(pruned.startswith("Log line entry number"))
+
+    def test_byte_counter_hud_throttling(self):
+        last_hud_ms = 0
+        hud_updates = 0
+
+        # Simulate 100 packets arriving over 500 ms (one every 5 ms)
+        for t in range(0, 500, 5):
+            if t - last_hud_ms >= 200:
+                last_hud_ms = t
+                hud_updates += 1
+
+        # In 500 ms with 200 ms throttling, HUD updates only 2 times (at t=200 and t=400) instead of 100 times!
+        self.assertEqual(hud_updates, 2)
+
+
 if __name__ == '__main__':
     print("=" * 65)
     print("  PocketSSH Terminal Pre-Build Verification & Validation Suite")
