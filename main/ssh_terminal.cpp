@@ -912,7 +912,9 @@ void SSHTerminal::send_interrupt()
         ssh_write_all("\x03", 1);
         ESP_LOGI(TAG, "Sent SIGINT (Ctrl+C)");
         set_activity_status("[^C SENT]", 0xFF4040);
-        append_text("^C\n");
+        // Do NOT call append_text("^C\n") during an active SSH session!
+        // The remote PTY will echo ^C\r\n through the normal receive channel,
+        // preventing double ^C and UI race conditions during followed logs.
     } else {
         current_input.clear();
         cursor_pos = 0;
@@ -3046,7 +3048,7 @@ esp_err_t SSHTerminal::disconnect()
     
     set_ssh_ui_mode(false);
     if (had_connection) {
-        append_text("\n\033[33m[SSH session closed]\033[0m\n> ");
+        append_text("\n#ffff00 [SSH session closed]#\n> ");
         scroll_to_bottom();
     }
     
@@ -3511,11 +3513,22 @@ void SSHTerminal::erase_to_end_of_line()
     if (cpos < 0) cpos = 0;
     if (cpos >= (int32_t)txt_len) return;
 
-    // Determine the end of the current line (up to next newline or end of buffer)
+    // Determine the end of the current visual line (up to next newline, visual row end, or end of buffer)
     int32_t eol_pos = (int32_t)txt_len;
     const char* next_nl = strchr(txt + cpos, '\n');
     if (next_nl != nullptr) {
         eol_pos = (int32_t)(next_nl - txt);
+    }
+
+    lv_obj_t* label = lv_textarea_get_label(terminal_output);
+    if (label) {
+        lv_point_t p;
+        lv_label_get_letter_pos(label, (uint32_t)cpos, &p);
+        p.x = 32000; // Far right edge of this visual row
+        uint32_t visual_eol = lv_label_get_letter_on(label, &p, true);
+        if (visual_eol > (uint32_t)cpos && (int32_t)visual_eol < eol_pos) {
+            eol_pos = (int32_t)visual_eol;
+        }
     }
 
     std::string kept(txt, cpos);
@@ -3533,17 +3546,34 @@ void SSHTerminal::erase_current_line()
     const char* txt = lv_textarea_get_text(terminal_output);
     if (!txt || txt[0] == '\0') return;
     
-    // Find start of current line
+    // Find start of current visual line
     int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
     size_t tlen = strlen(txt);
     if (cpos > (int32_t)tlen) cpos = (int32_t)tlen;
     if (cpos < 0) cpos = 0;
 
     int32_t sol = 0;
-    for (int32_t k = cpos - 1; k >= 0; k--) {
-        if (txt[k] == '\n') {
-            sol = k + 1;
-            break;
+    lv_obj_t* label = lv_textarea_get_label(terminal_output);
+    if (label && tlen > 0) {
+        lv_point_t p;
+        uint32_t ref_pos = (uint32_t)(cpos > 0 ? (cpos >= (int32_t)tlen ? tlen - 1 : cpos) : 0);
+        lv_label_get_letter_pos(label, ref_pos, &p);
+        p.x = 0;
+        sol = (int32_t)lv_label_get_letter_on(label, &p, true);
+        if (txt && cpos > 0) {
+            for (int32_t k = cpos - 1; k >= 0; k--) {
+                if (txt[k] == '\n') {
+                    if (sol <= k) sol = k + 1;
+                    break;
+                }
+            }
+        }
+    } else if (txt && cpos > 0) {
+        for (int32_t k = cpos - 1; k >= 0; k--) {
+            if (txt[k] == '\n') {
+                sol = k + 1;
+                break;
+            }
         }
     }
     lv_textarea_set_cursor_pos(terminal_output, sol);
@@ -3607,12 +3637,31 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         if (cpos > (int32_t)cur_len) cpos = (int32_t)cur_len;
         if (cpos < 0) cpos = 0;
         int32_t sol = 0;
-        for (int32_t k = cpos - 1; k >= 0; k--) {
-            if (cur_t[k] == '\n') {
-                sol = k + 1;
-                break;
+
+        lv_obj_t* label = lv_textarea_get_label(terminal_output);
+        if (label && cur_len > 0) {
+            lv_point_t p;
+            uint32_t ref_pos = (uint32_t)(cpos > 0 ? (cpos >= (int32_t)cur_len ? cur_len - 1 : cpos) : 0);
+            lv_label_get_letter_pos(label, ref_pos, &p);
+            p.x = 0; // Visual left margin of the current line
+            sol = (int32_t)lv_label_get_letter_on(label, &p, true);
+            if (cpos > 0) {
+                for (int32_t k = cpos - 1; k >= 0; k--) {
+                    if (cur_t[k] == '\n') {
+                        if (sol <= k) sol = k + 1;
+                        break;
+                    }
+                }
+            }
+        } else if (cpos > 0) {
+            for (int32_t k = cpos - 1; k >= 0; k--) {
+                if (cur_t[k] == '\n') {
+                    sol = k + 1;
+                    break;
+                }
             }
         }
+        sol = skip_color_tags_forward(cur_t, cur_len, sol);
         lv_textarea_set_cursor_pos(terminal_output, sol);
         cpos = sol;
         current_sol = sol;
@@ -3828,6 +3877,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'A') {
                         // Cursor Up
                         flush_stage();
+                        current_sol = -1;
                         int count = 1;
                         if (!params.empty()) count = atoi(params.c_str());
                         if (count < 1) count = 1;
@@ -3841,6 +3891,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'B') {
                         // Cursor Down
                         flush_stage();
+                        current_sol = -1;
                         int count = 1;
                         if (!params.empty()) count = atoi(params.c_str());
                         if (count < 1) count = 1;
@@ -3854,6 +3905,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'C') {
                         // Cursor right (clamped to end of current line, skipping color tags)
                         flush_stage();
+                        current_sol = -1;
                         cpos = lv_textarea_get_cursor_pos(terminal_output);
                         cur_t = lv_textarea_get_text(terminal_output);
                         cur_len = cur_t ? strlen(cur_t) : 0;
@@ -3891,6 +3943,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'D') {
                         // Non-destructive cursor left (clamped to start of line content, skipping color tags)
                         flush_stage();
+                        current_sol = -1;
                         cpos = lv_textarea_get_cursor_pos(terminal_output);
                         cur_t = lv_textarea_get_text(terminal_output);
                         cur_len = cur_t ? strlen(cur_t) : 0;
@@ -3923,6 +3976,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'G' || cmd == '`') {
                         // Cursor Horizontal Absolute (CHA / HPA, skipping color tags)
                         flush_stage();
+                        current_sol = -1;
                         int target_col = 1;
                         if (!params.empty()) target_col = atoi(params.c_str());
                         if (target_col < 1) target_col = 1;
@@ -3975,6 +4029,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'H' || cmd == 'f') {
                         // Cursor Position (CUP / HVP)
                         flush_stage();
+                        current_sol = -1;
                         int row = 1;
                         int col = 1;
                         if (!params.empty()) {
@@ -4157,6 +4212,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         // 4. Backspace '\b'
         if (ch == '\b') {
             flush_stage();
+            current_sol = -1;
             cpos = lv_textarea_get_cursor_pos(terminal_output);
             cur_t = lv_textarea_get_text(terminal_output);
             cur_len = cur_t ? strlen(cur_t) : 0;
@@ -5398,13 +5454,13 @@ void SSHTerminal::toggle_local_shell_mode()
     if (is_local_mode_during_ssh) {
         set_ssh_ui_mode(false);
         set_activity_status("[LOCAL]", 0xFFFF50);
-        append_text("\n\033[33m--- [PocketSSH Local Shell Active] ---\033[0m\n");
+        append_text("\n#ffff00 --- [PocketSSH Local Shell Active] ---#\n");
         append_text("Type local commands ('getkey', 'keys', 'test', 'status', 'help').\n");
-        append_text("Type '\033[1;32mresume\033[0m' or press \033[1;36mAlt+Enter\033[0m to return to SSH.\n\n");
+        append_text("Type '#50ff50 resume#' to return to SSH.\n\n");
     } else {
         set_ssh_ui_mode(true);
         set_activity_status("[ONLINE]", 0x50FF50);
-        append_text("\n\033[32m--- [Resumed Interactive SSH Session] ---\033[0m\n");
+        append_text("\n#50ff50 --- [Resumed Interactive SSH Session] ---#\n");
     }
     scroll_to_bottom();
 }
@@ -5413,7 +5469,7 @@ void SSHTerminal::send_arrow_up()
 {
     static uint32_t last_arrow_ms = 0;
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-    if (now - last_arrow_ms < 80) {
+    if (last_arrow_ms != 0 && now - last_arrow_ms < 180) {
         return; // debounce rapid trackball chatter
     }
     last_arrow_ms = now;
@@ -5430,7 +5486,7 @@ void SSHTerminal::send_arrow_down()
 {
     static uint32_t last_arrow_ms = 0;
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-    if (now - last_arrow_ms < 80) {
+    if (last_arrow_ms != 0 && now - last_arrow_ms < 180) {
         return; // debounce rapid trackball chatter
     }
     last_arrow_ms = now;
@@ -5447,7 +5503,7 @@ void SSHTerminal::send_arrow_left()
 {
     static uint32_t last_arrow_ms = 0;
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-    if (now - last_arrow_ms < 60) {
+    if (last_arrow_ms != 0 && now - last_arrow_ms < 120) {
         return;
     }
     last_arrow_ms = now;
@@ -5464,7 +5520,7 @@ void SSHTerminal::send_arrow_right()
 {
     static uint32_t last_arrow_ms = 0;
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-    if (now - last_arrow_ms < 60) {
+    if (last_arrow_ms != 0 && now - last_arrow_ms < 120) {
         return;
     }
     last_arrow_ms = now;

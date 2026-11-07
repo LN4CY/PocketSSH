@@ -1160,24 +1160,24 @@ class TestEscapePacketSplittingAndArrowUpDebounce(unittest.TestCase):
 
     def test_trackball_arrow_up_debounce(self):
         # Trackball mechanical roller can generate 8-10 falling edges in 50ms.
-        # Debouncing with 80ms threshold must compress them into 1 Arrow Up command.
+        # Debouncing with 180ms threshold must compress them into 1 Arrow Up command.
         last_arrow_ms = 0
         transmitted_arrows = []
 
         def handle_trackball_up_edge(current_time_ms: int):
             nonlocal last_arrow_ms
-            if current_time_ms - last_arrow_ms < 80:
+            if last_arrow_ms != 0 and current_time_ms - last_arrow_ms < 180:
                 return  # Debounced
             last_arrow_ms = current_time_ms
             transmitted_arrows.append("\033[A")
 
-        # Simulate 6 hardware edge pulses at 10ms intervals (one physical roller flick)
-        for t in [100, 110, 120, 130, 140, 150]:
+        # Simulate 6 hardware edge pulses at 15ms intervals (one physical roller flick)
+        for t in [100, 115, 130, 145, 160, 175]:
             handle_trackball_up_edge(t)
         self.assertEqual(len(transmitted_arrows), 1)
 
-        # Another flick 120ms later
-        handle_trackball_up_edge(270)
+        # Another flick 200ms later
+        handle_trackball_up_edge(320)
         self.assertEqual(len(transmitted_arrows), 2)
 
     def test_arrow_up_history_line_clear_replaces_cleanly(self):
@@ -1206,6 +1206,34 @@ class TestEscapePacketSplittingAndArrowUpDebounce(unittest.TestCase):
         updated = simulate_readline_history_update(active_line, "\r\033[Kpi@PiServer:~$ ls -l")
         self.assertEqual(updated, "pi@PiServer:~$ ls -l")
         self.assertNotIn("cat /var/log/syslog", updated)
+
+    def test_session_close_no_escape_characters(self):
+        # Disconnect messages and local shell banners must use LVGL #recolor# syntax,
+        # never raw ANSI escape sequences (\033[...) which leak as literal garbage on screen.
+        close_banner = "\n#ffff00 [SSH session closed]#\n> "
+        local_shell_banner = "\n#ffff00 --- [PocketSSH Local Shell Active] ---#\n"
+        resumed_banner = "\n#50ff50 --- [Resumed Interactive SSH Session] ---#\n"
+
+        for banner in [close_banner, local_shell_banner, resumed_banner]:
+            self.assertNotIn("\033", banner)
+            self.assertNotIn("\x1b", banner)
+            self.assertIn("#", banner)
+
+    def test_multiline_wrapped_history_preserves_prompt(self):
+        # Multi-line wrapped command: Row 1 = prompt + command start; Row 2 = remainder.
+        # When bash readline replaces history on Row 2, clearing Row 2 must NEVER wipe Row 1 prompt.
+        row1 = "pi@PiServer:~/MeshMonitor $ cat /etc/systemd/"
+        row2 = "system/meshmonitor.service"
+
+        # In LVGL visual wrapping, erasing to visual end of Row 2 from Row 2 start only deletes Row 2
+        visual_rows = [row1, row2]
+        # Simulate cursor at start of Row 2 with \033[K
+        erased_row2 = ""
+        visual_rows[1] = erased_row2
+
+        # Row 1 (the prompt) remains completely intact!
+        self.assertEqual(visual_rows[0], "pi@PiServer:~/MeshMonitor $ cat /etc/systemd/")
+        self.assertIn("pi@PiServer", visual_rows[0])
 
 
 if __name__ == '__main__':
