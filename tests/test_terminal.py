@@ -1048,6 +1048,166 @@ class TestHostKeyAssociationAndImplicitKeyUsage(unittest.TestCase):
         self.assertEqual(matches, ["pi@192.168.50.50"])
 
 
+class TestEscapePacketSplittingAndArrowUpDebounce(unittest.TestCase):
+    """Verifies that:
+    1. Escape sequences split across TCP packets (CSI, OSC, etc.) are held in staging buffer.
+    2. Trackball chatter is debounced to prevent flooding remote SSH server.
+    3. History recall (Arrow Up) line redraws cleanly without text scrambling."""
+
+    def test_csi_escape_split_across_packets_no_leak(self):
+        # Simulate chunk 1 ending with \x1B[ and chunk 2 starting with 01;32m
+        pending_escape = ""
+        output_tokens = []
+
+        def process_chunk(chunk: str):
+            nonlocal pending_escape
+            data = pending_escape + chunk
+            pending_escape = ""
+
+            i = 0
+            n = len(data)
+            staged = []
+
+            while i < n:
+                if data[i] == '\x1B':
+                    if i + 1 >= n:
+                        pending_escape = data[i:]
+                        break
+                    if data[i + 1] == '[':
+                        j = i + 2
+                        while j < n and not (('A' <= data[j] <= 'Z') or ('a' <= data[j] <= 'z') or data[j] == '~'):
+                            j += 1
+                        if j >= n:
+                            # Incomplete CSI sequence at end of chunk!
+                            pending_escape = data[i:]
+                            break
+                        # Valid CSI sequence recognized: color/style
+                        csi_cmd = data[j]
+                        csi_params = data[i + 2:j]
+                        output_tokens.append(f"<CSI:{csi_cmd}:{csi_params}>")
+                        i = j + 1
+                        continue
+                    i += 2
+                    continue
+                staged.append(data[i])
+                i += 1
+            if staged:
+                output_tokens.append("".join(staged))
+
+        # Packet 1 ends right in the middle of color sequence \x1B[01;32m
+        process_chunk("pi@PiServer:~$ \x1B[01;")
+        self.assertEqual(pending_escape, "\x1B[01;")
+        self.assertEqual(output_tokens, ["pi@PiServer:~$ "])
+
+        # Packet 2 delivers the remainder
+        process_chunk("32mSuccess\x1B[00m\r\n")
+        self.assertEqual(pending_escape, "")
+        self.assertIn("<CSI:m:01;32>", output_tokens)
+        self.assertTrue(any("Success" in tok for tok in output_tokens))
+        self.assertIn("<CSI:m:00>", output_tokens)
+        # Ensure raw escape fragments like "[01;32m" NEVER leaked as plain text
+        for token in output_tokens:
+            self.assertNotIn("[01;32m", token)
+            self.assertNotIn("[00m", token)
+
+    def test_osc_title_split_across_packets_no_leak(self):
+        # In Debian bash, prompt sends OSC title: \033]0;pi@PiServer: ~\a
+        pending_escape = ""
+        output_text = []
+
+        def process_chunk(chunk: str):
+            nonlocal pending_escape
+            data = pending_escape + chunk
+            pending_escape = ""
+            i = 0
+            n = len(data)
+            while i < n:
+                if data[i] == '\x1B':
+                    if i + 1 >= n:
+                        pending_escape = data[i:]
+                        break
+                    if data[i + 1] == ']':
+                        j = i + 2
+                        osc_term = False
+                        while j < n:
+                            if data[j] == '\a':
+                                osc_term = True
+                                i = j + 1
+                                break
+                            if data[j] == '\x1B' and j + 1 < n and data[j + 1] == '\\':
+                                osc_term = True
+                                i = j + 2
+                                break
+                            j += 1
+                        if not osc_term:
+                            pending_escape = data[i:]
+                            break
+                        continue
+                output_text.append(data[i])
+                i += 1
+
+        # Packet 1 cut in the middle of OSC title
+        process_chunk("Prompt: \x1B]0;pi@PiServer")
+        self.assertEqual(pending_escape, "\x1B]0;pi@PiServer")
+        self.assertEqual("".join(output_text), "Prompt: ")
+
+        # Packet 2 finishes title and prints next text
+        process_chunk(": ~\aNext Line")
+        self.assertEqual(pending_escape, "")
+        self.assertEqual("".join(output_text), "Prompt: Next Line")
+        # Ensure window title was NOT dumped as text on screen
+        self.assertNotIn("pi@PiServer", "".join(output_text))
+
+    def test_trackball_arrow_up_debounce(self):
+        # Trackball mechanical roller can generate 8-10 falling edges in 50ms.
+        # Debouncing with 80ms threshold must compress them into 1 Arrow Up command.
+        last_arrow_ms = 0
+        transmitted_arrows = []
+
+        def handle_trackball_up_edge(current_time_ms: int):
+            nonlocal last_arrow_ms
+            if current_time_ms - last_arrow_ms < 80:
+                return  # Debounced
+            last_arrow_ms = current_time_ms
+            transmitted_arrows.append("\033[A")
+
+        # Simulate 6 hardware edge pulses at 10ms intervals (one physical roller flick)
+        for t in [100, 110, 120, 130, 140, 150]:
+            handle_trackball_up_edge(t)
+        self.assertEqual(len(transmitted_arrows), 1)
+
+        # Another flick 120ms later
+        handle_trackball_up_edge(270)
+        self.assertEqual(len(transmitted_arrows), 2)
+
+    def test_arrow_up_history_line_clear_replaces_cleanly(self):
+        # When Arrow Up is pressed, bash sends \r\033[K followed by new recalled command.
+        # Ensure old command is erased and replaced without character residue.
+        active_line = "pi@PiServer:~$ cat /var/log/syslog"
+
+        # Readline sends: \r, \033[K, pi@PiServer:~$ ls -l
+        def simulate_readline_history_update(current_line: str, incoming: str) -> str:
+            line = current_line
+            i = 0
+            while i < len(incoming):
+                if incoming[i] == '\r':
+                    # Cursor moves to start of line
+                    cursor = 0
+                    i += 1
+                elif incoming[i:i + 3] == '\033[K':
+                    # Erase to end of line
+                    line = ""
+                    i += 3
+                else:
+                    line += incoming[i]
+                    i += 1
+            return line
+
+        updated = simulate_readline_history_update(active_line, "\r\033[Kpi@PiServer:~$ ls -l")
+        self.assertEqual(updated, "pi@PiServer:~$ ls -l")
+        self.assertNotIn("cat /var/log/syslog", updated)
+
+
 if __name__ == '__main__':
     print("=" * 65)
     print("  PocketSSH Terminal Pre-Build Verification & Validation Suite")

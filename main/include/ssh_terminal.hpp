@@ -172,6 +172,7 @@ private:
     std::string ssh_cmd_buffer;
     bool ssh_at_line_start;
     bool ssh_pending_cr;
+    std::string ssh_rx_pending_escape;
     bool is_local_mode_during_ssh;
     void process_escape_command(const std::string& raw_cmd);
     size_t cursor_pos;

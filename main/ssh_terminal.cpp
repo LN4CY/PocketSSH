@@ -71,6 +71,7 @@ SSHTerminal::SSHTerminal()
       ssh_cmd_buffer(""),
       ssh_at_line_start(true),
       ssh_pending_cr(false),
+      ssh_rx_pending_escape(""),
       is_local_mode_during_ssh(false),
       cursor_pos(0),
       bytes_received(0),
@@ -3014,6 +3015,7 @@ esp_err_t SSHTerminal::disconnect()
     is_local_mode_during_ssh = false;
     ssh_at_line_start = true;
     ssh_pending_cr = false;
+    ssh_rx_pending_escape.clear();
     set_activity_status("", 0x50FF50);
     
     if (ssh_mutex) xSemaphoreTakeRecursive(ssh_mutex, portMAX_DELAY);
@@ -3561,6 +3563,19 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         return;
     }
 
+    std::string combined_data;
+    if (!ssh_rx_pending_escape.empty()) {
+        if (ssh_rx_pending_escape.length() > 256) {
+            ssh_rx_pending_escape.clear();
+        } else {
+            combined_data = ssh_rx_pending_escape;
+            ssh_rx_pending_escape.clear();
+            combined_data.append(data, len);
+            data = combined_data.data();
+            len = combined_data.size();
+        }
+    }
+
     bool is_bold = false;
     std::string staged_text;
     staged_text.reserve(1024);
@@ -3569,6 +3584,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
     const char* cur_t = lv_textarea_get_text(terminal_output);
     size_t cur_len = cur_t ? strlen(cur_t) : 0;
     bool at_end = (cpos >= (int32_t)cur_len);
+    int32_t current_sol = -1;
 
     auto flush_stage = [&]() {
         if (!staged_text.empty()) {
@@ -3599,6 +3615,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         }
         lv_textarea_set_cursor_pos(terminal_output, sol);
         cpos = sol;
+        current_sol = sol;
         at_end = (cpos >= (int32_t)cur_len);
     };
 
@@ -3626,7 +3643,13 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
 
         // 1. ANSI Escape sequences
         if (ch == '\x1B' || ch == '\033') {
-            if (i + 1 < len && data[i + 1] == 'M') {
+            if (i + 1 >= len) {
+                flush_stage();
+                ssh_rx_pending_escape = std::string(data + i, len - i);
+                break;
+            }
+
+            if (data[i + 1] == 'M') {
                 // Reverse Index (RI) -> cursor UP
                 flush_stage();
                 i++;
@@ -3636,13 +3659,13 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                 cur_len = cur_t ? strlen(cur_t) : 0;
                 at_end = (cpos >= (int32_t)cur_len);
                 continue;
-            } else if (i + 1 < len && data[i + 1] == '7') {
+            } else if (data[i + 1] == '7') {
                 // Save Cursor (DECSC)
                 flush_stage();
                 i++;
                 s_saved_cursor_pos = lv_textarea_get_cursor_pos(terminal_output);
                 continue;
-            } else if (i + 1 < len && data[i + 1] == '8') {
+            } else if (data[i + 1] == '8') {
                 // Restore Cursor (DECRC)
                 flush_stage();
                 i++;
@@ -3653,22 +3676,38 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                 at_end = (cpos >= (int32_t)cur_len);
                 continue;
             }
-            if (i + 1 < len && data[i + 1] == '[') {
-                i += 2;
-                size_t csi_start = i;
-                while (i < len && !((data[i] >= 'A' && data[i] <= 'Z') || 
-                                    (data[i] >= 'a' && data[i] <= 'z') ||
-                                    data[i] == '~')) {
-                    i++;
+            if (data[i + 1] == '[') {
+                size_t csi_start = i + 2;
+                size_t j = csi_start;
+                while (j < len && !((data[j] >= 'A' && data[j] <= 'Z') || 
+                                    (data[j] >= 'a' && data[j] <= 'z') ||
+                                    data[j] == '~')) {
+                    j++;
                 }
-                if (i < len) {
-                    char cmd = data[i];
-                    std::string params = "";
-                    if (i > csi_start) {
-                        params = std::string(data + csi_start, i - csi_start);
-                    }
+                if (j >= len) {
+                    flush_stage();
+                    ssh_rx_pending_escape = std::string(data + i, len - i);
+                    break;
+                }
+                i = j;
+                char cmd = data[i];
+                std::string params = "";
+                if (i > csi_start) {
+                    params = std::string(data + csi_start, i - csi_start);
+                }
 
                     if (cmd == 'm') {
+                        if (!at_end && current_sol >= 0 && cpos == current_sol) {
+                            cur_t = lv_textarea_get_text(terminal_output);
+                            if (cur_t && strchr(cur_t + current_sol, '\n') == nullptr) {
+                                erase_to_end_of_line();
+                                cpos = lv_textarea_get_cursor_pos(terminal_output);
+                                cur_t = lv_textarea_get_text(terminal_output);
+                                cur_len = cur_t ? strlen(cur_t) : 0;
+                                at_end = (cpos >= (int32_t)cur_len);
+                            }
+                            current_sol = -1;
+                        }
                         // SGR (Select Graphic Rendition) - Colors & Styles
                         std::vector<int> codes;
                         if (params.empty()) {
@@ -3991,6 +4030,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                         cur_t = lv_textarea_get_text(terminal_output);
                         cur_len = cur_t ? strlen(cur_t) : 0;
                         at_end = (cpos >= (int32_t)cur_len);
+                        current_sol = -1;
                     } else if (cmd == 'P') {
                         // DCH - Delete character(s) at cursor position
                         flush_stage();
@@ -4017,20 +4057,37 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                         cur_len = cur_t ? strlen(cur_t) : 0;
                         at_end = (cpos >= (int32_t)cur_len);
                     }
-                }
             } else if (i + 1 < len && data[i + 1] == ']') {
                 // OSC sequence: skip until BEL (\a) or ST (\x1B\\)
-                i += 2;
-                while (i < len) {
-                    if (data[i] == '\a') break;
-                    if (data[i] == '\x1B' && i + 1 < len && data[i + 1] == '\\') {
-                        i++;
+                size_t j = i + 2;
+                bool osc_term = false;
+                while (j < len) {
+                    if (data[j] == '\a') {
+                        osc_term = true;
+                        i = j;
                         break;
                     }
-                    i++;
+                    if (data[j] == '\x1B' && j + 1 < len && data[j + 1] == '\\') {
+                        osc_term = true;
+                        i = j + 1;
+                        break;
+                    }
+                    j++;
                 }
+                if (!osc_term) {
+                    flush_stage();
+                    ssh_rx_pending_escape = std::string(data + i, len - i);
+                    break;
+                }
+                continue;
             } else if (i + 1 < len && (data[i + 1] == '(' || data[i + 1] == ')')) {
+                if (i + 2 >= len) {
+                    flush_stage();
+                    ssh_rx_pending_escape = std::string(data + i, len - i);
+                    break;
+                }
                 i += 2;
+                continue;
             }
             continue;
         }
@@ -4144,6 +4201,21 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
             cur_len = cur_t ? strlen(cur_t) : 0;
             at_end = (cpos >= (int32_t)cur_len);
             continue;
+        }
+
+        // Active bottom-line rewrite acceleration: if cursor was moved to start of line
+        // on the bottom line (lone \r without explicit \033[K) and content is being printed,
+        // clear the stale line text once so new text streams directly into staged_text.
+        if (!at_end && current_sol >= 0 && cpos == current_sol) {
+            cur_t = lv_textarea_get_text(terminal_output);
+            if (cur_t && strchr(cur_t + current_sol, '\n') == nullptr) {
+                erase_to_end_of_line();
+                cpos = lv_textarea_get_cursor_pos(terminal_output);
+                cur_t = lv_textarea_get_text(terminal_output);
+                cur_len = cur_t ? strlen(cur_t) : 0;
+                at_end = (cpos >= (int32_t)cur_len);
+            }
+            current_sol = -1;
         }
 
         // 5. Literal '#' character escape
@@ -4561,21 +4633,13 @@ void SSHTerminal::send_special_key(const char* sequence)
     }
     
     if (strcmp(sequence, "UP") == 0) {
-        if (ssh_connected && channel) {
-            libssh2_channel_write(channel, "\033[A", 3);
-        } else {
-            navigate_history(1);
-        }
+        send_arrow_up();
         toggle_side_panel();
         return;
     }
     
     if (strcmp(sequence, "DOWN") == 0) {
-        if (ssh_connected && channel) {
-            libssh2_channel_write(channel, "\033[B", 3);
-        } else {
-            navigate_history(-1);
-        }
+        send_arrow_down();
         toggle_side_panel();
         return;
     }
@@ -4635,21 +4699,13 @@ void SSHTerminal::send_special_key(const char* sequence)
     
     // Handle cursor movement keys
     if (strcmp(sequence, "LEFT") == 0) {
-        if (ssh_connected && channel) {
-            libssh2_channel_write(channel, "\033[D", 3);
-        } else {
-            move_cursor_left();
-        }
+        send_arrow_left();
         toggle_side_panel();
         return;
     }
     
     if (strcmp(sequence, "RIGHT") == 0) {
-        if (ssh_connected && channel) {
-            libssh2_channel_write(channel, "\033[C", 3);
-        } else {
-            move_cursor_right();
-        }
+        send_arrow_right();
         toggle_side_panel();
         return;
     }
@@ -5355,6 +5411,13 @@ void SSHTerminal::toggle_local_shell_mode()
 
 void SSHTerminal::send_arrow_up()
 {
+    static uint32_t last_arrow_ms = 0;
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (now - last_arrow_ms < 80) {
+        return; // debounce rapid trackball chatter
+    }
+    last_arrow_ms = now;
+
     if (ssh_connected && channel) {
         ssh_at_line_start = false;
         ssh_write_all("\033[A", 3);
@@ -5365,6 +5428,13 @@ void SSHTerminal::send_arrow_up()
 
 void SSHTerminal::send_arrow_down()
 {
+    static uint32_t last_arrow_ms = 0;
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (now - last_arrow_ms < 80) {
+        return; // debounce rapid trackball chatter
+    }
+    last_arrow_ms = now;
+
     if (ssh_connected && channel) {
         ssh_at_line_start = false;
         ssh_write_all("\033[B", 3);
@@ -5375,6 +5445,13 @@ void SSHTerminal::send_arrow_down()
 
 void SSHTerminal::send_arrow_left()
 {
+    static uint32_t last_arrow_ms = 0;
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (now - last_arrow_ms < 60) {
+        return;
+    }
+    last_arrow_ms = now;
+
     if (ssh_connected && channel) {
         ssh_at_line_start = false;
         ssh_write_all("\033[D", 3);
@@ -5385,6 +5462,13 @@ void SSHTerminal::send_arrow_left()
 
 void SSHTerminal::send_arrow_right()
 {
+    static uint32_t last_arrow_ms = 0;
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (now - last_arrow_ms < 60) {
+        return;
+    }
+    last_arrow_ms = now;
+
     if (ssh_connected && channel) {
         ssh_at_line_start = false;
         ssh_write_all("\033[C", 3);
