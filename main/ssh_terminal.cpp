@@ -1151,7 +1151,7 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
     }, LV_EVENT_CLICKED, this);
 
     lv_obj_t* hud_l1 = lv_label_create(alt_hud_panel);
-    lv_label_set_text(hud_l1, "[ALT ON] Enter:Local Shell | Space:Tab | Trackball:Arrows");
+    lv_label_set_text(hud_l1, "[ALT ON] Enter:Local | Space:Tab | 1:PgUp 2:PgDn | Trk:Arrows");
     lv_obj_set_style_text_color(hud_l1, lv_color_hex(0xFFCC00), 0);
     lv_obj_set_style_text_font(hud_l1, &lv_font_montserrat_10, 0);
     lv_obj_align(hud_l1, LV_ALIGN_TOP_LEFT, 2, 0);
@@ -1215,7 +1215,6 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
         "   keys / hosts          - Manage keys & bindings\n"
         "   help                  - Show all commands\n"
         "  ----------------------------------------\n"
-        "  Scroll: Trackball Up/Dn | Click to return\n"
         "  Ready. Type 'scan', 'connect', or 'help'...\n\n";
     
     lv_textarea_set_text(terminal_output, logo);
@@ -1447,6 +1446,16 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                 } else {
                     handle_tab_completion();
                 }
+                return;
+            }
+
+            // Page Up / Page Down
+            if (key == '1') {
+                scroll_page_up();
+                return;
+            }
+            if (key == '2') {
+                scroll_page_down();
                 return;
             }
 
@@ -2149,12 +2158,9 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                             "  getkey [path] [name]  - Fetch key from remote server\n"
                             "  exit                  - Disconnect SSH session\n"
                             "  clear                 - Clear terminal\n"
-                            "  pgup/pgdn/top/bottom  - Scroll terminal buffer\n"
-                            "  scroll                - Show scroll controls\n"
-                            "  Tab / Alt+Space       - Auto-complete\n"
                             "  version               - Show version & build info\n"
                             "  invert                - Toggle LCD color inversion\n"
-                            "  resume / fg           - Resume SSH session (Alt+Enter)\n"
+                            "  resume / fg           - Resume SSH session\n"
                             "  help                  - Show this help\n"
                             "  Note: Put .pem keys in /sdcard/ssh_keys/\n");
             }
