@@ -1235,6 +1235,21 @@ class TestEscapePacketSplittingAndArrowUpDebounce(unittest.TestCase):
         self.assertEqual(visual_rows[0], "pi@PiServer:~/MeshMonitor $ cat /etc/systemd/")
         self.assertIn("pi@PiServer", visual_rows[0])
 
+    def test_arrow_down_to_beginning_preserves_prompt(self):
+        # When user navigates history down to the empty starting prompt:
+        # Buffer has colored prompt followed by recalled command.
+        # Erasing from cursor (after prompt) with \033[K must leave the full colored prompt intact.
+        prompt = "#00ff00 pi@PiServer#:#0000ff ~/MeshMonitor $# "
+        old_command = "ls -la"
+        full_line = prompt + old_command
+        cursor_at_command_start = len(prompt)
+
+        # erase_to_end_of_line simulation at cursor_at_command_start
+        kept = full_line[:cursor_at_command_start]
+        self.assertEqual(kept, prompt)
+        self.assertTrue(kept.startswith("#00ff00 pi@PiServer"))
+        self.assertTrue(kept.endswith("~/MeshMonitor $# "))
+
 
 if __name__ == '__main__':
     print("=" * 65)

@@ -3513,22 +3513,11 @@ void SSHTerminal::erase_to_end_of_line()
     if (cpos < 0) cpos = 0;
     if (cpos >= (int32_t)txt_len) return;
 
-    // Determine the end of the current visual line (up to next newline, visual row end, or end of buffer)
+    // Determine the end of the current line (up to next newline or end of buffer)
     int32_t eol_pos = (int32_t)txt_len;
     const char* next_nl = strchr(txt + cpos, '\n');
     if (next_nl != nullptr) {
         eol_pos = (int32_t)(next_nl - txt);
-    }
-
-    lv_obj_t* label = lv_textarea_get_label(terminal_output);
-    if (label) {
-        lv_point_t p;
-        lv_label_get_letter_pos(label, (uint32_t)cpos, &p);
-        p.x = 32000; // Far right edge of this visual row
-        uint32_t visual_eol = lv_label_get_letter_on(label, &p, true);
-        if (visual_eol > (uint32_t)cpos && (int32_t)visual_eol < eol_pos) {
-            eol_pos = (int32_t)visual_eol;
-        }
     }
 
     std::string kept(txt, cpos);
@@ -3546,34 +3535,17 @@ void SSHTerminal::erase_current_line()
     const char* txt = lv_textarea_get_text(terminal_output);
     if (!txt || txt[0] == '\0') return;
     
-    // Find start of current visual line
+    // Find start of current line
     int32_t cpos = lv_textarea_get_cursor_pos(terminal_output);
     size_t tlen = strlen(txt);
     if (cpos > (int32_t)tlen) cpos = (int32_t)tlen;
     if (cpos < 0) cpos = 0;
 
     int32_t sol = 0;
-    lv_obj_t* label = lv_textarea_get_label(terminal_output);
-    if (label && tlen > 0) {
-        lv_point_t p;
-        uint32_t ref_pos = (uint32_t)(cpos > 0 ? (cpos >= (int32_t)tlen ? tlen - 1 : cpos) : 0);
-        lv_label_get_letter_pos(label, ref_pos, &p);
-        p.x = 0;
-        sol = (int32_t)lv_label_get_letter_on(label, &p, true);
-        if (txt && cpos > 0) {
-            for (int32_t k = cpos - 1; k >= 0; k--) {
-                if (txt[k] == '\n') {
-                    if (sol <= k) sol = k + 1;
-                    break;
-                }
-            }
-        }
-    } else if (txt && cpos > 0) {
-        for (int32_t k = cpos - 1; k >= 0; k--) {
-            if (txt[k] == '\n') {
-                sol = k + 1;
-                break;
-            }
+    for (int32_t k = cpos - 1; k >= 0; k--) {
+        if (txt[k] == '\n') {
+            sol = k + 1;
+            break;
         }
     }
     lv_textarea_set_cursor_pos(terminal_output, sol);
@@ -3614,7 +3586,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
     const char* cur_t = lv_textarea_get_text(terminal_output);
     size_t cur_len = cur_t ? strlen(cur_t) : 0;
     bool at_end = (cpos >= (int32_t)cur_len);
-    int32_t current_sol = -1;
 
     auto flush_stage = [&]() {
         if (!staged_text.empty()) {
@@ -3637,34 +3608,14 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         if (cpos > (int32_t)cur_len) cpos = (int32_t)cur_len;
         if (cpos < 0) cpos = 0;
         int32_t sol = 0;
-
-        lv_obj_t* label = lv_textarea_get_label(terminal_output);
-        if (label && cur_len > 0) {
-            lv_point_t p;
-            uint32_t ref_pos = (uint32_t)(cpos > 0 ? (cpos >= (int32_t)cur_len ? cur_len - 1 : cpos) : 0);
-            lv_label_get_letter_pos(label, ref_pos, &p);
-            p.x = 0; // Visual left margin of the current line
-            sol = (int32_t)lv_label_get_letter_on(label, &p, true);
-            if (cpos > 0) {
-                for (int32_t k = cpos - 1; k >= 0; k--) {
-                    if (cur_t[k] == '\n') {
-                        if (sol <= k) sol = k + 1;
-                        break;
-                    }
-                }
-            }
-        } else if (cpos > 0) {
-            for (int32_t k = cpos - 1; k >= 0; k--) {
-                if (cur_t[k] == '\n') {
-                    sol = k + 1;
-                    break;
-                }
+        for (int32_t k = cpos - 1; k >= 0; k--) {
+            if (cur_t[k] == '\n') {
+                sol = k + 1;
+                break;
             }
         }
-        sol = skip_color_tags_forward(cur_t, cur_len, sol);
         lv_textarea_set_cursor_pos(terminal_output, sol);
         cpos = sol;
-        current_sol = sol;
         at_end = (cpos >= (int32_t)cur_len);
     };
 
@@ -3746,17 +3697,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                 }
 
                     if (cmd == 'm') {
-                        if (!at_end && current_sol >= 0 && cpos == current_sol) {
-                            cur_t = lv_textarea_get_text(terminal_output);
-                            if (cur_t && strchr(cur_t + current_sol, '\n') == nullptr) {
-                                erase_to_end_of_line();
-                                cpos = lv_textarea_get_cursor_pos(terminal_output);
-                                cur_t = lv_textarea_get_text(terminal_output);
-                                cur_len = cur_t ? strlen(cur_t) : 0;
-                                at_end = (cpos >= (int32_t)cur_len);
-                            }
-                            current_sol = -1;
-                        }
                         // SGR (Select Graphic Rendition) - Colors & Styles
                         std::vector<int> codes;
                         if (params.empty()) {
@@ -3877,7 +3817,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'A') {
                         // Cursor Up
                         flush_stage();
-                        current_sol = -1;
                         int count = 1;
                         if (!params.empty()) count = atoi(params.c_str());
                         if (count < 1) count = 1;
@@ -3891,7 +3830,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'B') {
                         // Cursor Down
                         flush_stage();
-                        current_sol = -1;
                         int count = 1;
                         if (!params.empty()) count = atoi(params.c_str());
                         if (count < 1) count = 1;
@@ -3905,7 +3843,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'C') {
                         // Cursor right (clamped to end of current line, skipping color tags)
                         flush_stage();
-                        current_sol = -1;
                         cpos = lv_textarea_get_cursor_pos(terminal_output);
                         cur_t = lv_textarea_get_text(terminal_output);
                         cur_len = cur_t ? strlen(cur_t) : 0;
@@ -3943,7 +3880,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'D') {
                         // Non-destructive cursor left (clamped to start of line content, skipping color tags)
                         flush_stage();
-                        current_sol = -1;
                         cpos = lv_textarea_get_cursor_pos(terminal_output);
                         cur_t = lv_textarea_get_text(terminal_output);
                         cur_len = cur_t ? strlen(cur_t) : 0;
@@ -3976,7 +3912,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'G' || cmd == '`') {
                         // Cursor Horizontal Absolute (CHA / HPA, skipping color tags)
                         flush_stage();
-                        current_sol = -1;
                         int target_col = 1;
                         if (!params.empty()) target_col = atoi(params.c_str());
                         if (target_col < 1) target_col = 1;
@@ -4029,7 +3964,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     } else if (cmd == 'H' || cmd == 'f') {
                         // Cursor Position (CUP / HVP)
                         flush_stage();
-                        current_sol = -1;
                         int row = 1;
                         int col = 1;
                         if (!params.empty()) {
@@ -4085,7 +4019,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                         cur_t = lv_textarea_get_text(terminal_output);
                         cur_len = cur_t ? strlen(cur_t) : 0;
                         at_end = (cpos >= (int32_t)cur_len);
-                        current_sol = -1;
                     } else if (cmd == 'P') {
                         // DCH - Delete character(s) at cursor position
                         flush_stage();
@@ -4212,7 +4145,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         // 4. Backspace '\b'
         if (ch == '\b') {
             flush_stage();
-            current_sol = -1;
             cpos = lv_textarea_get_cursor_pos(terminal_output);
             cur_t = lv_textarea_get_text(terminal_output);
             cur_len = cur_t ? strlen(cur_t) : 0;
@@ -4257,21 +4189,6 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
             cur_len = cur_t ? strlen(cur_t) : 0;
             at_end = (cpos >= (int32_t)cur_len);
             continue;
-        }
-
-        // Active bottom-line rewrite acceleration: if cursor was moved to start of line
-        // on the bottom line (lone \r without explicit \033[K) and content is being printed,
-        // clear the stale line text once so new text streams directly into staged_text.
-        if (!at_end && current_sol >= 0 && cpos == current_sol) {
-            cur_t = lv_textarea_get_text(terminal_output);
-            if (cur_t && strchr(cur_t + current_sol, '\n') == nullptr) {
-                erase_to_end_of_line();
-                cpos = lv_textarea_get_cursor_pos(terminal_output);
-                cur_t = lv_textarea_get_text(terminal_output);
-                cur_len = cur_t ? strlen(cur_t) : 0;
-                at_end = (cpos >= (int32_t)cur_len);
-            }
-            current_sol = -1;
         }
 
         // 5. Literal '#' character escape
