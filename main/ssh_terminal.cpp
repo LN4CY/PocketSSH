@@ -123,6 +123,7 @@ SSHTerminal::SSHTerminal()
     ssh_mutex = xSemaphoreCreateRecursiveMutex();
     load_history_from_nvs();
     load_keys_from_nvs();
+    load_host_associations();
 }
 
 SSHTerminal::~SSHTerminal() 
@@ -1199,55 +1200,23 @@ lv_obj_t* SSHTerminal::create_terminal_screen()
     
     history_save_timer = lv_timer_create(history_save_cb, 5000, this);
 
-#ifdef POCKETSSH_VERSION
-    const char* logo = 
-        "\n"
-        "  ================================================\n"
-        "         POCKET SSH TERM v" POCKETSSH_VERSION " - ESP32-S3\n"
-        "  ================================================\n"
-        "\n"
-        "  WiFi Commands:\n"
-        "   scan                       - Scan 2.4GHz networks\n"
-        "   connect [SSID|#] [PASS]    - Connect WiFi (or saved)\n"
-        "   save <SSID|#> [PASS]       - Save network to NVS\n"
-        "   saved / forget             - View / clear saved WiFi\n"
-        "   autoconnect <on|off>       - Auto-connect on boot\n"
-        "   status / disconnect        - WiFi status / disconnect\n"
-        "  SSH Commands:\n"
-        "   ssh <HOST> [PORT] <U> <P>  - SSH password\n"
-        "   sshkey <H> [PORT] <U> <K>  - SSH keyfile\n"
-        "   exit                       - SSH off\n"
-        "   clear                      - Clear screen\n"
-        "   version                    - Show version info\n"
-        "   help                       - Show all commands\n"
-        "\n"
-        "  Scroll: Trackball Up/Dn to scroll | Click to bottom\n"
-        "  Ready. Type 'scan' or 'connect' to start...\n\n";
-#else
-    const char* logo = 
-        "\n"
-        "  ================================================\n"
-        "         POCKET SSH TERM v1.3.0 - ESP32-S3\n"
-        "  ================================================\n"
-        "\n"
-        "  WiFi Commands:\n"
-        "   scan                       - Scan 2.4GHz networks\n"
-        "   connect [SSID|#] [PASS]    - Connect WiFi (or saved)\n"
-        "   save <SSID|#> [PASS]       - Save network to NVS\n"
-        "   saved / forget             - View / clear saved WiFi\n"
-        "   autoconnect <on|off>       - Auto-connect on boot\n"
-        "   status / disconnect        - WiFi status / disconnect\n"
-        "  SSH Commands:\n"
-        "   ssh <HOST> [PORT] <U> <P>  - SSH password\n"
-        "   sshkey <H> [PORT] <U> <K>  - SSH keyfile\n"
-        "   exit                       - SSH off\n"
-        "   clear                      - Clear screen\n"
-        "   version                    - Show version info\n"
-        "   help                       - Show all commands\n"
-        "\n"
-        "  Scroll: Trackball Up/Dn to scroll | Click to bottom\n"
-        "  Ready. Type 'scan' or 'connect' to start...\n\n";
+#ifndef POCKETSSH_VERSION
+#define POCKETSSH_VERSION "1.3.0"
 #endif
+
+    const char* logo = 
+        "\n"
+        "  ========================================\n"
+        "     POCKET SSH TERM v" POCKETSSH_VERSION " - ESP32-S3\n"
+        "  ========================================\n"
+        "  Quick Start:\n"
+        "   connect [SSID] [PASS] - Connect WiFi (or saved)\n"
+        "   ssh <user>@<host>     - SSH (uses saved key)\n"
+        "   keys / hosts          - Manage keys & bindings\n"
+        "   help                  - Show all commands\n"
+        "  ----------------------------------------\n"
+        "  Scroll: Trackball Up/Dn | Click to return\n"
+        "  Ready. Type 'scan', 'connect', or 'help'...\n\n";
     
     lv_textarea_set_text(terminal_output, logo);
 
@@ -1918,22 +1887,84 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                     user = parts[3];
                     pass = parts[4];
                 } else if (parts.size() == 4) {
-                    host = parts[1];
-                    user = parts[2];
-                    pass = parts[3];
-                    port = 22;
-                } else if (parts.size() == 3 && parts[1].find('@') != std::string::npos) {
+                    if (parts[1].find('@') != std::string::npos) {
+                        size_t at_pos = parts[1].find('@');
+                        user = parts[1].substr(0, at_pos);
+                        host = parts[1].substr(at_pos + 1);
+                        port = std::atoi(parts[2].c_str());
+                        pass = parts[3];
+                    } else if (std::all_of(parts[2].begin(), parts[2].end(), ::isdigit)) {
+                        host = parts[1];
+                        port = std::atoi(parts[2].c_str());
+                        user = parts[3];
+                    } else {
+                        host = parts[1];
+                        user = parts[2];
+                        pass = parts[3];
+                        port = 22;
+                    }
+                } else if (parts.size() == 3) {
+                    if (parts[1].find('@') != std::string::npos) {
+                        size_t at_pos = parts[1].find('@');
+                        user = parts[1].substr(0, at_pos);
+                        host = parts[1].substr(at_pos + 1);
+                        if (std::all_of(parts[2].begin(), parts[2].end(), ::isdigit)) {
+                            port = std::atoi(parts[2].c_str());
+                        } else {
+                            pass = parts[2];
+                            port = 22;
+                        }
+                    } else {
+                        host = parts[1];
+                        user = parts[2];
+                        port = 22;
+                    }
+                } else if (parts.size() == 2 && parts[1].find('@') != std::string::npos) {
                     size_t at_pos = parts[1].find('@');
                     user = parts[1].substr(0, at_pos);
                     host = parts[1].substr(at_pos + 1);
-                    pass = parts[2];
                     port = 22;
                 }
                 
-                if (!host.empty() && !user.empty() && !pass.empty()) {
-                    connect(host.c_str(), port, user.c_str(), pass.c_str());
+                if (!host.empty() && !user.empty()) {
+                    if (!pass.empty()) {
+                        connect(host.c_str(), port, user.c_str(), pass.c_str());
+                    } else {
+                        // Check for saved host key association
+                        std::string assoc_key = get_host_key_association(user, host);
+                        if (assoc_key.empty() && loaded_keys.size() == 1) {
+                            assoc_key = loaded_keys.begin()->first;
+                        }
+
+                        if (!assoc_key.empty()) {
+                            size_t key_len = 0;
+                            const char* key_data = get_loaded_key(assoc_key.c_str(), &key_len);
+                            if (key_data && key_len > 0) {
+                                append_text("Using saved key: ");
+                                append_text(assoc_key.c_str());
+                                append_text(" for ");
+                                append_text(user.c_str());
+                                append_text("@");
+                                append_text(host.c_str());
+                                append_text("\n");
+                                connect_with_key(host.c_str(), port, user.c_str(), key_data, key_len);
+                            } else {
+                                append_text("ERROR: Saved key '");
+                                append_text(assoc_key.c_str());
+                                append_text("' not found in loaded keys!\n");
+                                append_text("Use 'keys' to list loaded keys or 'sshkey' to reconnect with a valid key.\n");
+                            }
+                        } else {
+                            append_text("No key associated with ");
+                            append_text(user.c_str());
+                            append_text("@");
+                            append_text(host.c_str());
+                            append_text(" and no password specified.\n");
+                            append_text("Usage:\n  ssh <USER>@<HOST> <PASS>\n  sshkey <USER>@<HOST> <KEYFILE>\n");
+                        }
+                    }
                 } else {
-                    append_text("Usage:\n  ssh <HOST> [PORT] <USER> <PASS>\n  ssh <USER>@<HOST> <PASS>\n");
+                    append_text("Usage:\n  ssh <USER>@<HOST> [PASS]\n  ssh <HOST> [PORT] <USER> [PASS]\n");
                 }
             }
             else if (current_input.rfind("sshkey ", 0) == 0) {
@@ -1956,10 +1987,18 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                     user = parts[3];
                     keyfile = parts[4];
                 } else if (parts.size() == 4) {
-                    host = parts[1];
-                    user = parts[2];
-                    keyfile = parts[3];
-                    port = 22;
+                    if (parts[1].find('@') != std::string::npos) {
+                        size_t at_pos = parts[1].find('@');
+                        user = parts[1].substr(0, at_pos);
+                        host = parts[1].substr(at_pos + 1);
+                        port = std::atoi(parts[2].c_str());
+                        keyfile = parts[3];
+                    } else {
+                        host = parts[1];
+                        user = parts[2];
+                        keyfile = parts[3];
+                        port = 22;
+                    }
                 } else if (parts.size() == 3 && parts[1].find('@') != std::string::npos) {
                     size_t at_pos = parts[1].find('@');
                     user = parts[1].substr(0, at_pos);
@@ -1975,6 +2014,10 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                         append_text("Using key file: ");
                         append_text(keyfile.c_str());
                         append_text("\n");
+                        save_host_key_association(user, host, keyfile);
+                        char assoc_msg[128];
+                        snprintf(assoc_msg, sizeof(assoc_msg), "[Associated %s@%s -> %s]\n", user.c_str(), host.c_str(), keyfile.c_str());
+                        append_text(assoc_msg);
                         connect_with_key(host.c_str(), port, user.c_str(), key_data, key_len);
                     } else {
                         append_text("ERROR: Key file not found: ");
@@ -1989,6 +2032,9 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
                 } else {
                     append_text("Usage:\n  sshkey <HOST> [PORT] <USER> <KEYFILE>\n  sshkey <USER>@<HOST> <KEYFILE>\n");
                 }
+            }
+            else if (current_input == "hosts" || current_input == "ssh hosts") {
+                show_host_associations();
             }
             else if (current_input == "disconnect" || current_input == "wifi disconnect") {
                 if (wifi_connected) {
@@ -2091,27 +2137,26 @@ void SSHTerminal::handle_key_input(char key, bool from_serial)
             }
             else if (current_input == "help") {
                 append_text("Available commands:\n"
-                            "  scan                       - Scan 2.4GHz WiFi networks\n"
-                            "  connect [SSID|#] [PASS]    - Connect WiFi (or saved if empty)\n"
-                            "  save <SSID|#> [PASS]       - Save WiFi network to NVS\n"
-                            "  saved                      - Show saved WiFi network\n"
-                            "  forget                     - Forget saved WiFi credentials\n"
-                            "  autoconnect <on|off>       - Toggle auto-connect on boot\n"
-                            "  status                     - Show WiFi info & IP\n"
-                            "  disconnect                 - Disconnect WiFi\n"
-                            "  ssh <HOST> <PORT> <U> <P>  - Connect via SSH (password)\n"
-                            "  sshkey <H> <P> <U> <KEY>   - Connect via SSH (private key)\n"
-                            "  keys                       - List all loaded SSH keys\n"
-                            "    Note: Place .pem keys in /sdcard/ssh_keys/ before use\n"
-                            "  exit                       - Disconnect SSH session\n"
-                            "  clear                      - Clear terminal\n"
-                            "  pgup / pgdn / top / bottom - Scroll terminal output\n"
-                            "  scroll                     - Show scrollback controls\n"
-                            "  Tab / Alt+Space            - Auto-complete command, SSID or keys\n"
-                            "  version                    - Show version & build info\n"
-                            "  invert                     - Toggle LCD color inversion\n"
-                            "  resume / fg                - Resume active SSH session (or Alt+Enter)\n"
-                            "  help                       - Show this help\n");
+                            "  scan                  - Scan 2.4GHz WiFi networks\n"
+                            "  connect [SSID] [PASS] - Connect WiFi (or saved)\n"
+                            "  save <SSID> [PASS]    - Save WiFi to NVS\n"
+                            "  saved / forget        - View / clear saved WiFi\n"
+                            "  autoconnect <on|off>  - Toggle auto-connect on boot\n"
+                            "  status / disconnect   - WiFi status / disconnect\n"
+                            "  ssh <U>@<H> [PASS]    - SSH (auto-uses saved key)\n"
+                            "  sshkey <U>@<H> <KEY>  - Connect & bind key to host\n"
+                            "  keys / hosts          - List loaded keys / bindings\n"
+                            "  getkey [path] [name]  - Fetch key from remote server\n"
+                            "  exit                  - Disconnect SSH session\n"
+                            "  clear                 - Clear terminal\n"
+                            "  pgup/pgdn/top/bottom  - Scroll terminal buffer\n"
+                            "  scroll                - Show scroll controls\n"
+                            "  Tab / Alt+Space       - Auto-complete\n"
+                            "  version               - Show version & build info\n"
+                            "  invert                - Toggle LCD color inversion\n"
+                            "  resume / fg           - Resume SSH session (Alt+Enter)\n"
+                            "  help                  - Show this help\n"
+                            "  Note: Put .pem keys in /sdcard/ssh_keys/\n");
             }
             else if (current_input == "invert" || current_input == "lcd invert" || current_input == "color invert") {
                 static bool s_inverted = false;
@@ -2611,6 +2656,9 @@ int SSHTerminal::waitsocket(int socket_fd, LIBSSH2_SESSION *session)
 
 esp_err_t SSHTerminal::connect(const char* host, int port, const char* username, const char* password)
 {
+    current_ssh_host = host ? host : "";
+    current_ssh_user = username ? username : "";
+
     if (!wifi_connected) {
         ESP_LOGE(TAG, "WiFi not connected");
         append_text("ERROR: WiFi not connected\n");
@@ -2723,6 +2771,9 @@ esp_err_t SSHTerminal::connect(const char* host, int port, const char* username,
 
 esp_err_t SSHTerminal::connect_with_key(const char* host, int port, const char* username, const char* privkey_data, size_t privkey_len)
 {
+    current_ssh_host = host ? host : "";
+    current_ssh_user = username ? username : "";
+
     if (!wifi_connected) {
         ESP_LOGE(TAG, "WiFi not connected");
         append_text("ERROR: WiFi not connected\n");
@@ -5076,6 +5127,167 @@ bool SSHTerminal::delete_key_from_nvs(const char* keyname)
     return true;
 }
 
+// ==========================================
+// Host-to-Key Association & Persistence
+// ==========================================
+
+void SSHTerminal::save_host_key_association(const std::string& user, const std::string& host, const std::string& keyfile)
+{
+    if (user.empty() || host.empty() || keyfile.empty()) return;
+
+    std::string u = user;
+    std::string h = host;
+    std::transform(u.begin(), u.end(), u.begin(), ::tolower);
+    std::transform(h.begin(), h.end(), h.begin(), ::tolower);
+    std::string assoc_key = u + "@" + h;
+
+    host_key_associations[assoc_key] = keyfile;
+    save_host_associations();
+    ESP_LOGI(TAG, "Saved host association: %s -> %s", assoc_key.c_str(), keyfile.c_str());
+}
+
+std::string SSHTerminal::get_host_key_association(const std::string& user, const std::string& host)
+{
+    if (host.empty()) return "";
+
+    std::string u = user;
+    std::string h = host;
+    std::transform(u.begin(), u.end(), u.begin(), ::tolower);
+    std::transform(h.begin(), h.end(), h.begin(), ::tolower);
+
+    // 1. Direct match: user@host
+    std::string assoc_key = u + "@" + h;
+    auto it = host_key_associations.find(assoc_key);
+    if (it != host_key_associations.end() && !it->second.empty()) {
+        return it->second;
+    }
+
+    // 2. Wildcard or host-only match: host or *@host
+    it = host_key_associations.find(h);
+    if (it != host_key_associations.end() && !it->second.empty()) {
+        return it->second;
+    }
+    it = host_key_associations.find("*@" + h);
+    if (it != host_key_associations.end() && !it->second.empty()) {
+        return it->second;
+    }
+
+    return "";
+}
+
+void SSHTerminal::save_host_associations()
+{
+    // 1. Save to SD card if mounted (/sdcard/ssh_keys/host_associations.cfg)
+    if (is_sd_card_mounted()) {
+        bool lock_acquired = bsp_display_lock(2000);
+        mkdir("/sdcard/ssh_keys", 0755);
+        FILE* f = fopen("/sdcard/ssh_keys/host_associations.cfg", "w");
+        if (f) {
+            for (const auto& pair : host_key_associations) {
+                fprintf(f, "%s=%s\n", pair.first.c_str(), pair.second.c_str());
+            }
+            fclose(f);
+            ESP_LOGI(TAG, "Saved %zu host associations to /sdcard/ssh_keys/host_associations.cfg", host_key_associations.size());
+        } else {
+            ESP_LOGW(TAG, "Failed to open /sdcard/ssh_keys/host_associations.cfg for writing");
+        }
+        if (lock_acquired) {
+            bsp_display_unlock();
+        }
+    }
+
+    // 2. Save to NVS as persistent fallback
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("ssh_keys", NVS_READWRITE, &nvs_handle);
+    if (err == ESP_OK) {
+        std::string packed;
+        for (const auto& pair : host_key_associations) {
+            packed += pair.first + "=" + pair.second + ";";
+        }
+        nvs_set_str(nvs_handle, "__host_assoc__", packed.c_str());
+        nvs_commit(nvs_handle);
+        nvs_close(nvs_handle);
+    }
+}
+
+void SSHTerminal::load_host_associations()
+{
+    // 1. Load from NVS fallback
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open("ssh_keys", NVS_READONLY, &nvs_handle);
+    if (err == ESP_OK) {
+        size_t str_len = 0;
+        if (nvs_get_str(nvs_handle, "__host_assoc__", NULL, &str_len) == ESP_OK && str_len > 0) {
+            std::vector<char> buf(str_len);
+            nvs_get_str(nvs_handle, "__host_assoc__", buf.data(), &str_len);
+            std::string packed(buf.data());
+            size_t start = 0;
+            size_t semi = packed.find(';');
+            while (semi != std::string::npos) {
+                std::string entry = packed.substr(start, semi - start);
+                size_t eq = entry.find('=');
+                if (eq != std::string::npos && eq > 0) {
+                    std::string k = entry.substr(0, eq);
+                    std::string v = entry.substr(eq + 1);
+                    if (!k.empty() && !v.empty()) {
+                        host_key_associations[k] = v;
+                    }
+                }
+                start = semi + 1;
+                semi = packed.find(';', start);
+            }
+        }
+        nvs_close(nvs_handle);
+    }
+
+    // 2. Load from SD card if mounted (overrides/augments NVS)
+    if (is_sd_card_mounted()) {
+        bool lock_acquired = bsp_display_lock(2000);
+        FILE* f = fopen("/sdcard/ssh_keys/host_associations.cfg", "r");
+        if (f) {
+            char line[256];
+            while (fgets(line, sizeof(line), f)) {
+                size_t len = strlen(line);
+                while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == '\n')) {
+                    line[len - 1] = '\0';
+                    len--;
+                }
+                char* eq = strchr(line, '=');
+                if (eq && eq > line) {
+                    *eq = '\0';
+                    std::string target = line;
+                    std::string keyname = eq + 1;
+                    if (!target.empty() && !keyname.empty()) {
+                        host_key_associations[target] = keyname;
+                    }
+                }
+            }
+            fclose(f);
+            ESP_LOGI(TAG, "Loaded %zu host associations from SD card", host_key_associations.size());
+        }
+        if (lock_acquired) {
+            bsp_display_unlock();
+        }
+    }
+}
+
+void SSHTerminal::show_host_associations()
+{
+    std::string txt = "\n=== SSH Host Key Associations ===\n";
+    if (host_key_associations.empty()) {
+        txt += "  No saved host associations.\n";
+        txt += "  Use 'sshkey <user>@<host> <key>' to create an association.\n";
+    } else {
+        for (const auto& pair : host_key_associations) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "  * %s -> %s\n", pair.first.c_str(), pair.second.c_str());
+            txt += buf;
+        }
+    }
+    txt += "=================================\n\n";
+    append_text(txt.c_str());
+}
+
 void SSHTerminal::toggle_alt_mode()
 {
     set_alt_mode(!alt_mode);
@@ -5200,7 +5412,17 @@ void SSHTerminal::show_loaded_keys()
             keys_text += buf;
         }
     }
-    keys_text += "=======================\n\n";
+    keys_text += "=======================\n";
+    if (!host_key_associations.empty()) {
+        keys_text += "\n=== Saved Host Associations ===\n";
+        for (const auto& pair : host_key_associations) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "  * %s -> %s\n", pair.first.c_str(), pair.second.c_str());
+            keys_text += buf;
+        }
+        keys_text += "===============================\n";
+    }
+    keys_text += "\n";
     append_text(keys_text.c_str());
 }
 
@@ -5749,6 +5971,13 @@ esp_err_t SSHTerminal::fetch_remote_key(const char* remote_path, const char* loc
         snprintf(ok_msg, sizeof(ok_msg), "[Key '%s' saved to NVS! Ready to use]\n", key_alias.c_str());
     }
     append_text(ok_msg);
+
+    if (!current_ssh_user.empty() && !current_ssh_host.empty()) {
+        save_host_key_association(current_ssh_user, current_ssh_host, key_alias);
+        char assoc_msg[160];
+        snprintf(assoc_msg, sizeof(assoc_msg), "[Associated %s@%s -> %s]\n", current_ssh_user.c_str(), current_ssh_host.c_str(), key_alias.c_str());
+        append_text(assoc_msg);
+    }
     return ESP_OK;
 }
 
@@ -5761,14 +5990,17 @@ void SSHTerminal::process_escape_command(const std::string& raw_cmd)
     
     if (cmd == "keys") {
         show_loaded_keys();
+    } else if (cmd == "hosts") {
+        show_host_associations();
     } else if (cmd == "exit" || cmd == "quit") {
         disconnect();
     } else if (cmd == "clear") {
         clear_terminal();
     } else if (cmd == "help" || cmd.empty()) {
         append_text("\n=== PocketSSH Escape Commands ===\n");
-        append_text("  :getkey [remote_path] - Fetch key from server (opens dialog if empty)\n");
-        append_text("  :keys                 - List all loaded SSH keys\n");
+        append_text("  :getkey [path] [name] - Fetch key from server\n");
+        append_text("  :keys                 - List loaded SSH keys\n");
+        append_text("  :hosts                - List host bindings\n");
         append_text("  :clear                - Clear terminal output\n");
         append_text("  :exit                 - Disconnect SSH session\n");
         append_text("=================================\n\n");
@@ -5857,13 +6089,13 @@ void SSHTerminal::handle_tab_completion()
         if (!ssh_connected) {
             cmd_list = {
                 "autoconnect", "bottom", "clear", "connect", "disconnect", "exit",
-                "forget", "help", "keys", "pgdn", "pgup", "save", "saved",
-                "scan", "scroll", "ssh", "sshkey", "status", "top", "version", "wifi"
+                "forget", "getkey", "help", "hosts", "invert", "keys", "pgdn", "pgup", "resume",
+                "save", "saved", "scan", "scroll", "ssh", "sshkey", "status", "top", "version", "wifi"
             };
         } else {
             cmd_list = {
                 // Local commands available during SSH
-                "bottom", "clear", "exit", "help", "pgdn", "pgup", "scroll", "status", "top", "version",
+                "bottom", "clear", "exit", "getkey", "help", "hosts", "invert", "keys", "pgdn", "pgup", "resume", "scroll", "status", "top", "version",
                 // Common Linux CLI tools
                 "apt", "cat", "cd", "chmod", "chown", "cp", "curl", "df", "dmesg", "docker",
                 "find", "free", "git", "grep", "head", "htop", "journalctl", "kill", "ls",
@@ -6091,7 +6323,50 @@ void SSHTerminal::handle_tab_completion()
         return;
     }
 
-    // D) sshkey keyfile completion
+    // D) ssh saved host completion
+    if (istarts_with(current_input, "ssh ") && !istarts_with(current_input, "sshkey ")) {
+        std::string arg = current_input.substr(4);
+        if (arg.find(' ') == std::string::npos && !host_key_associations.empty()) {
+            std::vector<std::string> hosts;
+            for (const auto& pair : host_key_associations) {
+                hosts.push_back(pair.first);
+            }
+            if (arg.empty()) {
+                std::string out = "\nSaved SSH hosts:\n";
+                for (const auto& h : hosts) {
+                    out += "  " + h + " (key: " + host_key_associations[h] + ")\n";
+                }
+                append_text(out.c_str());
+                scroll_to_bottom();
+                return;
+            }
+            std::vector<std::string> matches;
+            for (const auto& h : hosts) {
+                if (istarts_with(h, arg)) matches.push_back(h);
+            }
+            if (matches.size() == 1) {
+                current_input = "ssh " + matches[0] + " ";
+                cursor_pos = current_input.length();
+                update_input_display();
+                return;
+            } else if (matches.size() > 1) {
+                std::string lcp = calc_lcp(matches);
+                if (lcp.length() > arg.length()) {
+                    current_input = "ssh " + lcp;
+                    cursor_pos = current_input.length();
+                    update_input_display();
+                } else {
+                    std::string out = "\nMatching hosts:\n";
+                    for (const auto& m : matches) out += "  " + m + "\n";
+                    append_text(out.c_str());
+                    scroll_to_bottom();
+                }
+                return;
+            }
+        }
+    }
+
+    // E) sshkey keyfile completion
     if (istarts_with(current_input, "sshkey ")) {
         size_t last_space = current_input.rfind(' ');
         std::string before = current_input.substr(0, last_space + 1);

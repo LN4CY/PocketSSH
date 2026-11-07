@@ -119,6 +119,12 @@ public:
     void load_keys_from_nvs();
     bool delete_key_from_nvs(const char* keyname);
     void show_loaded_keys();
+    // Host-to-Key Association & Persistence
+    void save_host_key_association(const std::string& user, const std::string& host, const std::string& keyfile);
+    std::string get_host_key_association(const std::string& user, const std::string& host);
+    void load_host_associations();
+    void save_host_associations();
+    void show_host_associations();
     void erase_current_line();
     void erase_to_end_of_line();
     void send_interrupt();
@@ -203,6 +209,11 @@ private:
     
     // SSH key storage: keyname -> key content
     std::map<std::string, std::string> loaded_keys;
+    
+    // Host-to-Key associations: user@host -> keyfile
+    std::string current_ssh_host;
+    std::string current_ssh_user;
+    std::map<std::string, std::string> host_key_associations;
     
     void update_terminal_display();
     void update_input_display();

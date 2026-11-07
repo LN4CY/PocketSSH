@@ -967,6 +967,87 @@ class TestHighSpeedAnsiParser(unittest.TestCase):
         self.assertEqual(hud_updates, 2)
 
 
+class TestHostKeyAssociationAndImplicitKeyUsage(unittest.TestCase):
+    """Verifies that connecting with sshkey creates an explicit association,
+    which is used implicitly by ssh <user>@<host> without requiring a password."""
+
+    def setUp(self):
+        self.associations = {}
+        self.loaded_keys = {
+            "id_pem": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0...",
+            "id_rsa": "-----BEGIN RSA PRIVATE KEY-----\nMIIEogIBAAKCAQEA7..."
+        }
+
+    def save_association(self, user, host, keyfile):
+        u = user.strip().lower()
+        h = host.strip().lower()
+        self.associations[f"{u}@{h}"] = keyfile
+
+    def get_association(self, user, host):
+        u = user.strip().lower()
+        h = host.strip().lower()
+        return self.associations.get(f"{u}@{h}", self.associations.get(h, ""))
+
+    def test_explicit_association_on_sshkey(self):
+        # 1. User connects with 'sshkey pi@192.168.50.50 id_pem'
+        cmd = "sshkey pi@192.168.50.50 id_pem"
+        parts = cmd.split()
+        user_host = parts[1]
+        user, host = user_host.split('@')
+        keyfile = parts[2]
+
+        self.save_association(user, host, keyfile)
+        self.assertEqual(self.get_association("pi", "192.168.50.50"), "id_pem")
+        # Case insensitive lookup
+        self.assertEqual(self.get_association("PI", "192.168.50.50"), "id_pem")
+
+    def test_implicit_key_usage_on_ssh_without_password(self):
+        # Preset association
+        self.save_association("pi", "192.168.50.50", "id_pem")
+
+        # User invokes 'ssh pi@192.168.50.50' (no password)
+        cmd = "ssh pi@192.168.50.50"
+        parts = cmd.split()
+        self.assertEqual(len(parts), 2)
+        user, host = parts[1].split('@')
+
+        key = self.get_association(user, host)
+        self.assertEqual(key, "id_pem")
+        self.assertIn(key, self.loaded_keys)
+
+        # Connection method resolved to public key
+        resolved_auth_type = "publickey" if key and key in self.loaded_keys else "password"
+        self.assertEqual(resolved_auth_type, "publickey")
+
+    def test_host_association_persistence_serialization(self):
+        # Serialization to INI/cfg format
+        self.save_association("pi", "192.168.50.50", "id_pem")
+        self.save_association("admin", "router.local", "id_rsa")
+
+        cfg_content = "".join([f"{k}={v}\n" for k, v in self.associations.items()])
+        self.assertIn("pi@192.168.50.50=id_pem\n", cfg_content)
+        self.assertIn("admin@router.local=id_rsa\n", cfg_content)
+
+        # Deserialization test
+        loaded = {}
+        for line in cfg_content.strip().split('\n'):
+            if '=' in line:
+                k, v = line.split('=', 1)
+                loaded[k] = v
+        self.assertEqual(loaded["pi@192.168.50.50"], "id_pem")
+        self.assertEqual(loaded["admin@router.local"], "id_rsa")
+
+    def test_ssh_tab_completion_proposes_saved_hosts(self):
+        self.save_association("pi", "192.168.50.50", "id_pem")
+        self.save_association("root", "192.168.50.1", "id_rsa")
+
+        # User typed 'ssh pi' and hit Tab
+        current_input = "ssh pi"
+        arg = current_input[4:]
+        matches = [h for h in self.associations.keys() if h.startswith(arg)]
+        self.assertEqual(matches, ["pi@192.168.50.50"])
+
+
 if __name__ == '__main__':
     print("=" * 65)
     print("  PocketSSH Terminal Pre-Build Verification & Validation Suite")

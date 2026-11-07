@@ -821,6 +821,7 @@ extern "C" void app_main(void)
         ssh_terminal->load_key_from_memory("id_ed25519_virtual", vkey, strlen(vkey));
     }
     load_ssh_keys_from_sd(ssh_terminal);
+    ssh_terminal->load_host_associations();
     if (disp) {
         bsp_display_lock(0);
         ssh_screen = ssh_terminal->create_terminal_screen();
@@ -985,7 +986,7 @@ void load_ssh_keys_from_sd(SSHTerminal* terminal)
             continue;
         }
 
-        char filepath[256];
+        char filepath[512];
         snprintf(filepath, sizeof(filepath), "%s/%s", keys_dir, entry->d_name);
 
         FILE* f = fopen(filepath, "rb");
