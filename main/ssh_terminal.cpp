@@ -3552,11 +3552,11 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
             i = 1;
             ssh_at_line_start = true;
             if (at_end) {
-                staged_text.push_back('\\n');
+                staged_text.push_back('\n');
             } else {
                 flush_stage();
                 lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);
-                lv_textarea_add_char(terminal_output, '\\n');
+                lv_textarea_add_char(terminal_output, '\n');
                 at_end = true;
             }
         } else {
@@ -3568,7 +3568,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         char ch = data[i];
 
         // 1. ANSI Escape sequences
-        if (ch == '\\x1B' || ch == '\\033') {
+        if (ch == '\x1B' || ch == '\033') {
             if (i + 1 < len && data[i + 1] == 'M') {
                 // Reverse Index (RI) -> cursor UP
                 flush_stage();
@@ -3615,7 +3615,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                         // SGR (Select Graphic Rendition) - Colors & Styles
                         std::vector<int> codes;
                         if (params.empty()) {
-                            codes.push_back(0); // \\033[m -> reset
+                            codes.push_back(0); // \033[m -> reset
                         } else {
                             size_t p = 0;
                             while (p < params.size()) {
@@ -3692,7 +3692,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                                     s_color_tag_open = false;
                                 }
                             } else if (code == 38 && ci + 2 < codes.size() && codes[ci + 1] == 5) {
-                                // 256-color palette (\\033[38;5;<n>m)
+                                // 256-color palette (\033[38;5;<n>m)
                                 int col_idx = codes[ci + 2];
                                 uint32_t rgb = ansi_256_to_rgb(col_idx);
                                 char tag[16];
@@ -3709,7 +3709,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                                 s_current_fg_rgb = rgb;
                                 ci += 2;
                             } else if (code == 38 && ci + 4 < codes.size() && codes[ci + 1] == 2) {
-                                // 24-bit TrueColor (\\033[38;2;<r>;<g>;<b>m)
+                                // 24-bit TrueColor (\033[38;2;<r>;<g>;<b>m)
                                 int r = codes[ci + 2];
                                 int g = codes[ci + 3];
                                 int b = codes[ci + 4];
@@ -3765,7 +3765,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                         if (cpos < 0) cpos = 0;
                         int32_t eol = (int32_t)cur_len;
                         if (cur_t) {
-                            const char* next_nl = strchr(cur_t + cpos, '\\n');
+                            const char* next_nl = strchr(cur_t + cpos, '\n');
                             if (next_nl) eol = (int32_t)(next_nl - cur_t);
                         }
                         int count = 1;
@@ -3803,7 +3803,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                         int32_t sol = 0;
                         if (cur_t) {
                             for (int32_t k = cpos - 1; k >= 0; k--) {
-                                if (cur_t[k] == '\\n') {
+                                if (cur_t[k] == '\n') {
                                     sol = k + 1;
                                     break;
                                 }
@@ -3832,20 +3832,20 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                         if (target_col < 1) target_col = 1;
 
                         cur_t = lv_textarea_get_text(terminal_output);
-                        if (cur_t && cur_t[0] != '\\0') {
+                        if (cur_t && cur_t[0] != '\0') {
                             cpos = lv_textarea_get_cursor_pos(terminal_output);
                             cur_len = strlen(cur_t);
                             if (cpos > (int32_t)cur_len) cpos = (int32_t)cur_len;
                             if (cpos < 0) cpos = 0;
                             int32_t sol = 0;
                             for (int32_t k = cpos - 1; k >= 0; k--) {
-                                if (cur_t[k] == '\\n') {
+                                if (cur_t[k] == '\n') {
                                     sol = k + 1;
                                     break;
                                 }
                             }
                             int32_t eol = (int32_t)cur_len;
-                            const char* next_nl = strchr(cur_t + sol, '\\n');
+                            const char* next_nl = strchr(cur_t + sol, '\n');
                             if (next_nl) eol = (int32_t)(next_nl - cur_t);
 
                             int32_t pos = sol;
@@ -3894,7 +3894,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                         if (col < 1) col = 1;
                         if (row == 1 && col == 1) {
                             cur_t = lv_textarea_get_text(terminal_output);
-                            if (!cur_t || cur_t[0] == '\\0') {
+                            if (!cur_t || cur_t[0] == '\0') {
                                 lv_textarea_set_cursor_pos(terminal_output, 0);
                             }
                         }
@@ -3962,11 +3962,11 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     }
                 }
             } else if (i + 1 < len && data[i + 1] == ']') {
-                // OSC sequence: skip until BEL (\\a) or ST (\\x1B\\\\)
+                // OSC sequence: skip until BEL (\a) or ST (\x1B\\)
                 i += 2;
                 while (i < len) {
-                    if (data[i] == '\\a') break;
-                    if (data[i] == '\\x1B' && i + 1 < len && data[i + 1] == '\\\\') {
+                    if (data[i] == '\a') break;
+                    if (data[i] == '\x1B' && i + 1 < len && data[i + 1] == '\\') {
                         i++;
                         break;
                     }
@@ -3978,25 +3978,25 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
             continue;
         }
 
-        // 2. Carriage return '\\r'
-        if (ch == '\\r') {
+        // 2. Carriage return '\r'
+        if (ch == '\r') {
             s_utf8_expected = 0;
             s_utf8_len = 0;
             if (i + 1 < len) {
-                if (data[i + 1] == '\\n') {
+                if (data[i + 1] == '\n') {
                     i++;
                     ssh_at_line_start = true;
                     if (at_end) {
-                        staged_text.push_back('\\n');
+                        staged_text.push_back('\n');
                     } else {
                         flush_stage();
                         cpos = lv_textarea_get_cursor_pos(terminal_output);
                         cur_t = lv_textarea_get_text(terminal_output);
                         cur_len = cur_t ? strlen(cur_t) : 0;
-                        const char* next_nl = (cur_t && cpos < (int32_t)cur_len) ? strchr(cur_t + cpos, '\\n') : nullptr;
+                        const char* next_nl = (cur_t && cpos < (int32_t)cur_len) ? strchr(cur_t + cpos, '\n') : nullptr;
                         if (!next_nl) {
                             lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);
-                            lv_textarea_add_char(terminal_output, '\\n');
+                            lv_textarea_add_char(terminal_output, '\n');
                             at_end = true;
                         } else {
                             lv_textarea_cursor_down(terminal_output);
@@ -4005,33 +4005,33 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     }
                     continue;
                 } else {
-                    // True lone '\\r': cursor repositioned to start of line (non-destructive)
+                    // True lone '\r': cursor repositioned to start of line (non-destructive)
                     move_cursor_to_sol();
                     continue;
                 }
             } else {
-                // '\\r' at end of buffer: wait for next byte to check for CRLF
+                // '\r' at end of buffer: wait for next byte to check for CRLF
                 ssh_pending_cr = true;
                 continue;
             }
         }
 
-        // 3. Line feed '\\n'
-        if (ch == '\\n') {
+        // 3. Line feed '\n'
+        if (ch == '\n') {
             ssh_at_line_start = true;
             s_utf8_expected = 0;
             s_utf8_len = 0;
             if (at_end) {
-                staged_text.push_back('\\n');
+                staged_text.push_back('\n');
             } else {
                 flush_stage();
                 cpos = lv_textarea_get_cursor_pos(terminal_output);
                 cur_t = lv_textarea_get_text(terminal_output);
                 cur_len = cur_t ? strlen(cur_t) : 0;
-                const char* next_nl = (cur_t && cpos < (int32_t)cur_len) ? strchr(cur_t + cpos, '\\n') : nullptr;
+                const char* next_nl = (cur_t && cpos < (int32_t)cur_len) ? strchr(cur_t + cpos, '\n') : nullptr;
                 if (!next_nl) {
                     lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);
-                    lv_textarea_add_char(terminal_output, '\\n');
+                    lv_textarea_add_char(terminal_output, '\n');
                     at_end = true;
                 } else {
                     lv_textarea_cursor_down(terminal_output);
@@ -4040,8 +4040,8 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
             continue;
         }
 
-        // 4. Backspace '\\b'
-        if (ch == '\\b') {
+        // 4. Backspace '\b'
+        if (ch == '\b') {
             flush_stage();
             cpos = lv_textarea_get_cursor_pos(terminal_output);
             cur_t = lv_textarea_get_text(terminal_output);
@@ -4049,14 +4049,14 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
             int32_t sol = 0;
             if (cur_t && cpos > 0) {
                 for (int32_t k = cpos - 1; k >= 0; k--) {
-                    if (cur_t[k] == '\\n') {
+                    if (cur_t[k] == '\n') {
                         sol = k + 1;
                         break;
                     }
                 }
             }
             int32_t min_pos = get_line_content_start(cur_t, cur_len, sol);
-            if (i + 2 < len && data[i + 1] == ' ' && data[i + 2] == '\\b') {
+            if (i + 2 < len && data[i + 1] == ' ' && data[i + 2] == '\b') {
                 i += 2;
                 if (cpos > min_pos) {
                     if (cpos >= min_pos + 8 && cur_t[cpos - 8] == '#' && cur_t[cpos - 1] == ' ') {
@@ -4064,7 +4064,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     }
                     lv_textarea_delete_char(terminal_output);
                 }
-            } else if (i + 3 < len && data[i + 1] == '\\x1B' && data[i + 2] == '[' && data[i + 3] == 'K') {
+            } else if (i + 3 < len && data[i + 1] == '\x1B' && data[i + 2] == '[' && data[i + 3] == 'K') {
                 i += 3;
                 if (cpos > min_pos) {
                     if (cpos >= min_pos + 8 && cur_t[cpos - 8] == '#' && cur_t[cpos - 1] == ' ') {
@@ -4104,7 +4104,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                 lv_textarea_set_cursor_pos(terminal_output, cpos);
                 cur_t = lv_textarea_get_text(terminal_output);
                 cur_len = cur_t ? strlen(cur_t) : 0;
-                if (cpos >= 0 && cpos < (int32_t)cur_len && cur_t[cpos] != '\\n' && cur_t[cpos] != '\\0') {
+                if (cpos >= 0 && cpos < (int32_t)cur_len && cur_t[cpos] != '\n' && cur_t[cpos] != '\0') {
                     if (cur_t[cpos] == '#' && cpos + 7 < (int32_t)cur_len && cur_t[cpos + 7] == ' ') {
                         for (int k = 0; k < 8; k++) lv_textarea_delete_char_forward(terminal_output);
                     } else if (cur_t[cpos] == '#' && cpos + 1 < (int32_t)cur_len && cur_t[cpos + 1] == '#') {
@@ -4127,8 +4127,8 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         }
 
         // 6. Bell or control characters
-        if (ch == '\\a') continue;
-        if ((unsigned char)ch < 32 && ch != '\\t') continue;
+        if (ch == '\a') continue;
+        if ((unsigned char)ch < 32 && ch != '\t') continue;
 
         // 7. UTF-8 Multi-byte decoder & Smart Emoji Engine
         if ((unsigned char)ch >= 0x80) {
@@ -4156,7 +4156,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                     }
 
                     const char* rep = get_emoji_representation(codepoint);
-                    if (rep && rep[0] != '\\0') {
+                    if (rep && rep[0] != '\0') {
                         if (at_end) {
                             if (rep[0] == '#') {
                                 if (s_color_tag_open) staged_text.push_back('#');
@@ -4191,12 +4191,12 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
         // 8. Regular ASCII character or tab
         s_utf8_expected = 0;
         s_utf8_len = 0;
-        if (ch == '\\t') {
+        if (ch == '\t') {
             if (at_end) {
-                staged_text.push_back('\\t');
+                staged_text.push_back('\t');
             } else {
                 flush_stage();
-                lv_textarea_add_char(terminal_output, '\\t');
+                lv_textarea_add_char(terminal_output, '\t');
                 cpos = lv_textarea_get_cursor_pos(terminal_output);
                 cur_t = lv_textarea_get_text(terminal_output);
                 cur_len = cur_t ? strlen(cur_t) : 0;
@@ -4221,7 +4221,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
                 lv_textarea_add_char(terminal_output, (uint32_t)(unsigned char)ch);
                 at_end = true;
             } else {
-                if (cpos >= 0 && cur_t[cpos] != '\\n' && cur_t[cpos] != '\\0') {
+                if (cpos >= 0 && cur_t[cpos] != '\n' && cur_t[cpos] != '\0') {
                     if (cur_t[cpos] == '#' && cpos + 7 < (int32_t)cur_len && cur_t[cpos + 7] == ' ') {
                         for (int k = 0; k < 8; k++) lv_textarea_delete_char_forward(terminal_output);
                     } else if (cur_t[cpos] == '#' && cpos + 1 < (int32_t)cur_len && cur_t[cpos + 1] == '#') {
@@ -4250,7 +4250,7 @@ void SSHTerminal::process_received_data(const char* data, size_t len)
     size_t cur_txt_len = cur_txt ? strlen(cur_txt) : 0;
     if (cur_txt_len > 6144) {
         const char* p = cur_txt + (cur_txt_len - 3072);
-        const char* nl = strchr(p, '\\n');
+        const char* nl = strchr(p, '\n');
         if (nl) {
             lv_textarea_set_text(terminal_output, nl + 1);
             lv_textarea_set_cursor_pos(terminal_output, LV_TEXTAREA_CURSOR_LAST);

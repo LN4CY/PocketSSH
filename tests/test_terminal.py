@@ -834,6 +834,55 @@ class TestHighSpeedAnsiParser(unittest.TestCase):
         self.assertEqual(result, "#00ff00 [INFO]# System initialization complete at 100%\n")
         self.assertFalse(color_open)
 
+    def test_debian_bash_prompt_with_osc_and_bracketed_paste(self):
+        # The exact sequence sent by Raspberry Pi Debian bash prompt:
+        # \033[?2004h (bracketed paste) + \033]0;title\a (OSC title) + \033[01;32m (bold green) + \033[00m (reset)
+        prompt_stream = "\033[?2004h\033]0;pi@PiServer: ~\a\033[01;32mpi@PiServer\033[00m:\033[01;34m~ $\033[00m "
+        staged = []
+        color_open = False
+        i = 0
+        while i < len(prompt_stream):
+            ch = prompt_stream[i]
+            if ch == '\033':
+                if i + 1 < len(prompt_stream) and prompt_stream[i + 1] == '[':
+                    i += 2
+                    csi_start = i
+                    while i < len(prompt_stream) and not (prompt_stream[i].isalpha() or prompt_stream[i] == '~'):
+                        i += 1
+                    if i < len(prompt_stream):
+                        cmd = prompt_stream[i]
+                        params = prompt_stream[csi_start:i]
+                        if cmd == 'm':
+                            codes = [int(p) for p in params.split(';') if p] if params else [0]
+                            for c in codes:
+                                if c == 0:
+                                    if color_open: staged.append('#'); color_open = False
+                                elif c in (32,):
+                                    if color_open: staged.append('#')
+                                    staged.append("#55ff55 ")
+                                    color_open = True
+                                elif c in (34,):
+                                    if color_open: staged.append('#')
+                                    staged.append("#5555ff ")
+                                    color_open = True
+                    i += 1
+                    continue
+                elif i + 1 < len(prompt_stream) and prompt_stream[i + 1] == ']':
+                    # OSC sequence: skip until \a
+                    i += 2
+                    while i < len(prompt_stream) and prompt_stream[i] != '\a':
+                        i += 1
+                    i += 1
+                    continue
+            staged.append(ch)
+            i += 1
+
+        result = "".join(staged)
+        # Verify OSC title and bracketed paste are stripped, and colors properly formatted
+        self.assertNotIn("?2004h", result)
+        self.assertNotIn("PiServer: ~", result.split('#')[0]) # OSC title is not leaked into output
+        self.assertEqual(result, "#55ff55 pi@PiServer#:#5555ff ~ $# ")
+
     def test_crlf_split_across_packet_boundary(self):
         # Simulates TCP fragmentation where \r is at the end of chunk 1 and \n is at chunk 2 start
         chunk1 = "Line 1 data\r"
